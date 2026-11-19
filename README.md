@@ -10,6 +10,12 @@ It is **unbranded for the client**. The client's company name, contracts, teams,
 
 ---
 
+## Quick deploy on Windows
+
+Double‑click **`deploy.bat`** and pick an option. It runs the right Firebase commands for this project, so you don't need to type them. You still need the one‑off steps below first: Node.js, `firebase-tools`, `firebase login`, and switching the services on in the console.
+
+> **About GitHub:** the drag‑and‑drop upload on GitHub leaves out files whose names start with a dot (`.firebaserc`, `.gitignore`). That's fine. `deploy.bat` and the commands below all name the project directly with `--project metering-1-22462`.
+
 ## 1. Set up the Firebase project (one‑off)
 
 The project in `assets/firebase-config.js` is `metering-1-22462`. In the [Firebase console](https://console.firebase.google.com/):
@@ -17,11 +23,12 @@ The project in `assets/firebase-config.js` is `metering-1-22462`. In the [Fireba
 1. **Authentication** → Sign‑in method → enable **Email/Password**.
 2. **Firestore Database** → Create database (production mode, region of your choice).
 3. **Storage** → Get started. This is needed only for Portal Documents.
-4. **Deploy the security rules.** Install the Firebase CLI, then run these from this folder:
+4. **Hosting** → Get started, and click through to the end. Without this, deploying fails with *"Assertion failed: resolving hosting target…"*.
+5. **Deploy the security rules.** Install the Firebase CLI, then run these from this folder:
    ```bash
    npm install -g firebase-tools
    firebase login
-   firebase deploy --only firestore:rules,storage
+   firebase deploy --only firestore:rules,storage --project metering-1-22462
    ```
    Catalistics AI also needs `firebase deploy --only functions`. See the Catalistics AI section.
 
@@ -32,7 +39,7 @@ The project in `assets/firebase-config.js` is `metering-1-22462`. In the [Fireba
 You can use any static host. With Firebase Hosting:
 
 ```bash
-firebase deploy --only hosting
+firebase deploy --only hosting --project metering-1-22462
 ```
 
 For a quick local look, run `npx serve .` or `python -m http.server`. Pages use ES modules, so they **must be served over http(s)**. Opening them as `file://` will not work.
@@ -79,12 +86,12 @@ The Claude API key is stored as a Firebase secret and never appears in the web p
    cd functions
    npm install
    cd ..
-   firebase functions:secrets:set ANTHROPIC_API_KEY
+   firebase functions:secrets:set ANTHROPIC_API_KEY --project metering-1-22462
    ```
    Paste the key when asked. Nothing appears on screen while you paste, which is normal.
 4. Deploy the function and the updated rules:
    ```bash
-   firebase deploy --only functions,firestore
+   firebase deploy --only functions,firestore --project metering-1-22462
    ```
    If it asks to enable APIs (Cloud Functions, Cloud Build, Artifact Registry, Secret Manager), answer **Y**. The first deploy takes a few minutes.
 5. Open **Catalistics AI** in the menu and ask a question.
@@ -181,8 +188,8 @@ Dates are stored as `YYYY-MM-DD` text. Every query filters on a single field, so
 
 ## Moving to another client
 
-1. Create a new Firebase project. Put its settings in **`assets/firebase-config.js`** and its ID in `.firebaserc`.
-2. Deploy the rules and hosting as above, then run `setup.html`.
+1. Create a new Firebase project. Put its settings in **`assets/firebase-config.js`**, and its ID in `.firebaserc`, `deploy.bat` (`PROJECT`) and `firebase.json` (`site`).
+2. Deploy the rules and hosting as above, then run `setup.html`. Also change `PROJECT` in `deploy.bat` and `site` in `firebase.json`.
 3. On Targets & KPIs → Backup, you can **download** one installation's settings and **load** them into another.
 4. Logo files are in `assets/` (`logo.png`, `logo-mark.png`, `logo-wordmark.png`, `favicon.png`).
 

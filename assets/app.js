@@ -662,8 +662,15 @@ export async function initPage({ roles = ['admin', 'manager'], shell = true } = 
   if (!user) { location.href = 'login.html?next=' + encodeURIComponent(location.pathname.split('/').pop() + location.search); return new Promise(() => {}); }
   state.user = user;
 
-  let profile = null;
-  try { profile = await fetchDoc(C.users, user.uid); } catch (e) { console.error(e); }
+  let profile = null, readError = null;
+  try { profile = await fetchDoc(C.users, user.uid); } catch (e) { console.error(e); readError = e; }
+  if (readError) {
+    bootScreen(`<h2>Can't reach the database</h2><p>You are signed in as <b>${esc(user.email)}</b>, but the database refused the request (${esc(readError.code || readError.message)}).</p>
+      <p>This usually means the Firestore security rules haven't been deployed yet. From the Catalistics folder run <code>firebase deploy --only firestore</code>, then open <a href="setup.html">setup</a> again with the same email and password.</p>
+      <button class="btn">Sign out</button>`);
+    $('#boot .btn').onclick = logout;
+    return new Promise(() => {});
+  }
   if (!profile || profile.active === false) {
     bootScreen(`<h2>No access yet</h2><p>You are signed in as <b>${esc(user.email)}</b>, but this account has not been given access.</p>
       <p>Ask an administrator to add you on <b>Users &amp; Access</b>. Setting up a brand-new installation? Open <a href="setup.html">setup</a>.</p>

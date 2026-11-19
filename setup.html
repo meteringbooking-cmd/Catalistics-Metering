@@ -53,7 +53,9 @@ $('form').onsubmit = async e => {
   } catch (err) {
     console.error(err);
     $('msg').innerHTML = err.code === 'permission-denied'
-      ? '<p class="t-warn">This installation has already been set up. <a href="login.html">Sign in</a> instead, or ask an administrator for access.</p>'
+      ? `<p class="t-warn"><b>The database refused the request.</b> Either:</p>
+         <ul class="muted"><li>the Firestore security rules haven't been deployed yet — run <code>firebase deploy --only firestore</code> from the Catalistics folder, then press <b>Create administrator</b> again with the same details; or</li>
+         <li>this installation has already been set up — <a href="login.html">sign in</a> instead, or ask an administrator for access.</li></ul>`
       : `<p class="t-bad">${err.message}</p>`;
     $('go').disabled = false;
   }
