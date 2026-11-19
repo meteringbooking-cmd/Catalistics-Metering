@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "metering-1-22462",
     "public": ".",
     "ignore": ["firebase.json", ".firebaserc", "firestore.rules", "storage.rules", "README.md", "functions/**", "**/.*"]
   },
