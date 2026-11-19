@@ -12,9 +12,9 @@
   <div class="page-head"><div><h1>Daily Performance</h1><p>One working day, team by team, against each contract's targets. Engineers with an attendance code but no figures are shown so nobody is missed.</p></div></div>
   <div class="toolbar">
     <label class="field">Day<input type="date" id="day"></label>
-    <button class="btn sm" id="prev" type="button">◀ Previous</button><button class="btn sm" id="next" type="button">Next ▶</button>
+    <button class="btn" id="prev" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg> Previous</button><button class="btn" id="next" type="button">Next <svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
     <label class="field">Contract<span id="cWrap"></span></label>
-    <div class="spacer"></div><button class="btn" id="export" type="button">⬇ Export</button>
+    <div class="spacer"></div><button class="btn" id="export" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg> Export</button>
   </div>
   <div class="grid" id="kpis" style="--min:170px;margin-bottom:16px"></div>
   <div class="table-wrap"><table class="table" id="tbl"></table></div>

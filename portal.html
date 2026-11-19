@@ -22,7 +22,7 @@
 </main>
 </div>
 <script type="module">
-import { initPage, C, db, collection, addDoc, serverTimestamp, where, $, $$, esc, el, options, fetchAll, fetchDoc, getEngineers, engineerOptions, aggregate, attendanceSummary,
+import { initPage, icon, C, db, collection, addDoc, serverTimestamp, where, $, $$, esc, el, options, fetchAll, fetchDoc, getEngineers, engineerOptions, aggregate, attendanceSummary,
   contractOf, teamOf, codeChip, todayISO, addDays, monthStart, rag, fmtNum, fmtPct, fmtMoney, fmtDate, num, toast, stamp } from './assets/app.js';
 
 const ctx = await initPage({ roles: ['admin', 'manager', 'engineer'] }); const { cfg, profile, role } = ctx;
@@ -131,7 +131,7 @@ function show(k) {
     }).join('')}</tbody></table></div>`;
   }
 }
-const noticeHtml = n => `<div class="notice ${n.priority === 'Important' ? 'important' : ''}"><h4>${n.priority === 'Important' ? '⚠️ ' : ''}${esc(n.title)}</h4><div style="white-space:pre-wrap">${esc(n.message)}</div><div class="faint" style="font-size:12px;margin-top:6px">${fmtDate(n.publishDate)}</div></div>`;
+const noticeHtml = n => `<div class="notice ${n.priority === 'Important' ? 'important' : ''}"><h4>${n.priority === 'Important' ? `<span class="t-bad">${icon('alert', 16)}</span> ` : ''}${esc(n.title)}</h4><div style="white-space:pre-wrap">${esc(n.message)}</div><div class="faint" style="font-size:12px;margin-top:6px">${fmtDate(n.publishDate)}</div></div>`;
 load();
 </script>
 </body>

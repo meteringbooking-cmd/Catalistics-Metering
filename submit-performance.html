@@ -8,7 +8,7 @@
 <style>
   #grid td input { width: 78px; text-align: right; }
   #grid td input.note { width: 100%; min-width: 160px; text-align: left; }
-  #grid tr.changed td { background: rgba(61,143,224,.07); }
+  #grid tr.changed td { background: var(--accent-soft); }
   #grid tr.invalid td input.bad-in { border-color: var(--bad); }
 </style>
 </head>
@@ -22,8 +22,8 @@
     <label class="field">Contract<span id="cWrap"></span></label>
     <label class="field">Team<span id="tWrap"></span></label>
     <div class="spacer"></div>
-    <button class="btn" id="template" type="button">⬇ Upload template</button>
-    <label class="btn" style="cursor:pointer">⬆ Upload spreadsheet<input type="file" id="file" accept=".xlsx,.xls,.csv" hidden></label>
+    <button class="btn" id="template" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg> Upload template</button>
+    <label class="btn" style="cursor:pointer"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/></svg> Upload spreadsheet<input type="file" id="file" accept=".xlsx,.xls,.csv" hidden></label>
     <button class="btn primary" id="save" type="button">Save figures</button>
   </div>
   <div class="row" style="margin-bottom:10px"><span class="muted" id="status"></span></div>

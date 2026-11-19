@@ -8,7 +8,7 @@ import {
   $, $$, esc, el, options, num, fmtDate, fmtMoney, fmtNum, todayISO, addDays,
   fetchAll, fetchRange, getEngineers, engineerOptions, teamName, contractName, teamOf,
   modal, toast, confirmBox, makeSortable, exportXlsx, readSpreadsheet, pick, normaliseDate,
-  matchEngineer, commitInBatches, stamp
+  matchEngineer, commitInBatches, stamp, icon
 } from './app.js';
 
 const optList = (f, cfg) => (typeof f.options === 'function' ? f.options(cfg) : f.options || []);
@@ -20,7 +20,7 @@ function displayValue(f, row, ctx) {
     case 'date': return v ? `<span data-v="${esc(v)}">${fmtDate(v)}</span>` : '<span class="faint">–</span>';
     case 'money': return v === '' || v === undefined ? '–' : fmtMoney(v, 2);
     case 'number': return v === '' || v === undefined ? '–' : fmtNum(v, f.dp ?? 0);
-    case 'checkbox': return v ? '<span class="t-good">✓</span>' : '<span class="faint">–</span>';
+    case 'checkbox': return v ? `<span class="t-good">${icon('check', 16)}</span>` : '<span class="faint">–</span>';
     case 'engineer': return esc(row.engineerName || '–');
     case 'team': return esc(teamName(row.teamId));
     case 'contract': return esc(contractName(row.contractId));
@@ -96,15 +96,15 @@ export async function logbook(container, spec, ctx) {
 
   const btns = $('#lbButtons', container);
   for (const t of spec.toolbar || []) {
-    const b = el(`<button class="btn ${t.kind || ''}" type="button">${esc(t.label)}</button>`);
+    const b = el(`<button class="btn ${t.kind || ''}" type="button">${t.icon ? icon(t.icon, 15) : ''}${esc(t.label)}</button>`);
     b.onclick = () => t.onClick(api); btns.append(b);
   }
   if (spec.importable !== false) {
-    const b = el('<button class="btn" type="button">⬆ Import</button>'); b.onclick = () => importDialog(); btns.append(b);
+    const b = el('<button class="btn" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/></svg> Import</button>'); b.onclick = () => importDialog(); btns.append(b);
   }
-  const ex = el('<button class="btn" type="button">⬇ Export</button>'); ex.onclick = () => exportRows(); btns.append(ex);
+  const ex = el('<button class="btn" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg> Export</button>'); ex.onclick = () => exportRows(); btns.append(ex);
   if (spec.canAdd !== false) {
-    const add = el(`<button class="btn primary" type="button">+ ${esc(spec.addLabel || 'Add record')}</button>`); add.onclick = () => openForm(); btns.append(add);
+    const add = el(`<button class="btn primary" type="button">${icon('plus', 15)} ${esc(spec.addLabel || 'Add record')}</button>`); add.onclick = () => openForm(); btns.append(add);
   }
 
   if (dateField) {

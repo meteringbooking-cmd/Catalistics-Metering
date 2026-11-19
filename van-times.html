@@ -14,7 +14,7 @@
 </main>
 </div>
 <script type="module">
-import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { initPage, icon, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
 import { logbook, engineerFields } from './assets/logbook.js';
 
 const ctx = await initPage(); const { cfg } = ctx;
@@ -40,7 +40,7 @@ await logbook($('#book'), {
     { key: 'lastEnd', label: 'Last end', type: 'time', required: true },
     { key: 'miles', label: 'Miles', type: 'number' },
     { key: 'hours', label: 'Day length', type: 'number', compute: r => len(r), format: v => v === null ? '–' : `${Math.floor(v)}h ${String(Math.round((v % 1) * 60)).padStart(2, '0')}m` },
-    { key: 'flags', label: 'Flags', type: 'text', compute: r => flags(r).join(', '), format: (v, r) => flags(r).map(f => `<span class="badge ${f === 'Long day' || f === 'After hours' ? 'warn' : 'bad'}">${f}</span>`).join(' ') || '<span class="t-good">✓</span>' },
+    { key: 'flags', label: 'Flags', type: 'text', compute: r => flags(r).join(', '), format: (v, r) => flags(r).map(f => `<span class="badge ${f === 'Long day' || f === 'After hours' ? 'warn' : 'bad'}">${f}</span>`).join(' ') || `<span class="t-good">${icon('check', 16)}</span>` },
     { key: 'explanation', label: 'Explanation', type: 'text', list: false },
   ],
   beforeSave: d => {

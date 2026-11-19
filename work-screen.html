@@ -20,14 +20,14 @@
 <div id="app" hidden>
 <main class="page">
   <div class="screen-head">
-    <img src="assets/logo.png" alt="Catalistics">
+    <img src="assets/logo-dark.png" alt="Catalistics">
     <div><div style="font-family:var(--display);font-size:22px;font-weight:700" id="client"></div><div class="muted">Work Screen · <span id="dayLabel"></span></div></div>
     <div class="clock"><span id="clock"></span><small id="date"></small><div class="updated" id="updated"></div></div>
   </div>
   <div class="toolbar" id="controls">
     <label class="field">Day shown<input type="date" id="day"></label>
-    <button class="btn" id="refresh" type="button">↻ Refresh</button>
-    <a class="btn ghost" id="tv" href="?tv=1">⛶ TV mode</a>
+    <button class="btn" id="refresh" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg> Refresh</button>
+    <a class="btn" id="tv" href="?tv=1"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg> TV mode</a>
     <div class="spacer"></div>
     <a class="btn ghost" href="daily-performance.html">Daily table</a>
     <a class="btn ghost" href="performance-report.html">Full report</a>
@@ -41,7 +41,7 @@
 </main>
 </div>
 <script type="module">
-import { initPage, C, $, esc, fetchRange, fetchAll, where, prevWorkingDay, lastNWorkingDays, monthStart, weekStart, workingDaysBetween, monthEnd,
+import { initPage, CHART, C, $, esc, fetchRange, fetchAll, where, prevWorkingDay, lastNWorkingDays, monthStart, weekStart, workingDaysBetween, monthEnd,
   aggregate, attendanceSummary, rag, fmtNum, fmtPct, fmtDate, fmtDateLong, activeContracts, drawChart, codeOf, todayISO, addDays, daysBetween } from './assets/app.js';
 
 const ctx = await initPage();
@@ -102,7 +102,7 @@ async function load() {
         ${kpi('Vehicle checks', fmtPct(checkPct, 0), `${checked.size} done · target ${cfg.targets.vehicleCheckTarget}%`, rag(checkPct, cfg.targets.vehicleCheckTarget), checkPct)}
       </div>
       <div class="lower">
-        <div class="card" style="background:var(--bg-2)"><div class="card-head"><h3>Last 10 working days</h3></div><div class="chart-box" style="--h:220px"><canvas></canvas></div></div>
+        <div class="card" style="box-shadow:none"><div class="card-head"><h3>Last 10 working days</h3></div><div class="chart-box" style="--h:220px"><canvas></canvas></div></div>
         <div class="period">
           ${kpi('Week to date', fmtNum(wtd.meters), `Target ${fmtNum(wtd.target, 0)} · ${fmtPct(wtd.targetPct, 0)}`, rag(wtd.targetPct, 100), wtd.targetPct)}
           ${kpi('Month to date', fmtNum(mtd.meters), `Target ${fmtNum(mtd.target, 0)} · ${fmtPct(mtd.targetPct, 0)}`, rag(mtd.targetPct, 100), mtd.targetPct)}
@@ -117,8 +117,8 @@ async function load() {
         labels: days10.map(d => fmtDate(d, { day: '2-digit', month: 'short' })),
         datasets: [
           { type: 'bar', label: 'Meters', data: series.map(s => s.meters), backgroundColor: c.colour + 'cc', borderRadius: 4, yAxisID: 'y' },
-          { type: 'line', label: 'Target', data: series.map(s => Math.round(s.target * 10) / 10), borderColor: '#f3b440', borderDash: [5, 4], pointRadius: 0, yAxisID: 'y' },
-          { type: 'line', label: 'Completion %', data: series.map(s => s.completionPct && Math.round(s.completionPct)), borderColor: '#e9f0fb', pointRadius: 2, tension: .3, yAxisID: 'y2' },
+          { type: 'line', label: 'Target', data: series.map(s => Math.round(s.target * 10) / 10), borderColor: CHART.target, borderDash: [5, 4], pointRadius: 0, yAxisID: 'y' },
+          { type: 'line', label: 'Completion %', data: series.map(s => s.completionPct && Math.round(s.completionPct)), borderColor: CHART.line, pointRadius: 2, tension: .3, yAxisID: 'y2' },
         ],
       },
       options: { scales: { y: { beginAtZero: true }, y2: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { callback: v => v + '%' } } } },
@@ -131,7 +131,7 @@ async function load() {
   $('#attBadge').className = 'badge ' + rag(s.attendancePct, cfg.targets.attendanceTarget);
   $('#attBadge').textContent = fmtPct(s.attendancePct);
   const counts = cfg.attendanceCodes.map(code => ({ code, n: att.filter(a => a.code === code.code).length })).filter(x => x.n);
-  $('#attBox').innerHTML = counts.length ? `<ul class="list-plain">${counts.map(x => `<li class="row"><span class="code-chip" style="background:${x.code.colour}2e;color:${x.code.colour}">${esc(x.code.code)}</span>${esc(x.code.label)}<span class="spacer"></span><b>${x.n}</b></li>`).join('')}</ul>` : '<div class="muted">No attendance recorded for this day.</div>';
+  $('#attBox').innerHTML = counts.length ? `<ul class="list-plain">${counts.map(x => `<li class="row"><span class="code-chip" style="background:${x.code.colour}1f;color:${x.code.colour}">${esc(x.code.code)}</span>${esc(x.code.label)}<span class="spacer"></span><b>${x.n}</b></li>`).join('')}</ul>` : '<div class="muted">No attendance recorded for this day.</div>';
 
   // Top engineers
   const top = perf.filter(r => r.date === day).sort((a, b) => b.metersInstalled - a.metersInstalled || b.jobsCompleted - a.jobsCompleted).slice(0, 6);

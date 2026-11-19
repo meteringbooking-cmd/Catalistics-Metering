@@ -16,7 +16,7 @@
     <div id="presets"></div>
     <label class="field">Contract<span id="cWrap"></span></label>
     <label class="field">Team<span id="tWrap"></span></label>
-    <div class="spacer"></div><button class="btn" id="export" type="button">⬇ Export to Excel</button>
+    <div class="spacer"></div><button class="btn" id="export" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg> Export to Excel</button>
   </div>
   <div class="grid" id="kpis" style="--min:165px;margin-bottom:16px"></div>
   <div class="card"><div class="card-head"><h3>Daily trend</h3></div><div class="chart-box" style="--h:280px"><canvas id="trend"></canvas></div></div>
@@ -25,7 +25,7 @@
 </main>
 </div>
 <script type="module">
-import { initPage, C, $, esc, fetchRange, aggregate, attendanceSummary, rag, fmtNum, fmtPct, fmtMoney, fmtDate, contractSelect, teamSelect, teamOf, contractOf,
+import { initPage, CHART, C, $, esc, fetchRange, aggregate, attendanceSummary, rag, fmtNum, fmtPct, fmtMoney, fmtDate, contractSelect, teamSelect, teamOf, contractOf,
   groupBy, rangePreset, presetButtons, workingDaysBetween, drawChart, exportXlsx, makeSortable } from './assets/app.js';
 
 const ctx = await initPage(); const { cfg } = ctx;
@@ -72,9 +72,9 @@ function render() {
   const days = workingDaysBetween(from, to);
   const daily = days.map(d => aggregate(perf.filter(r => r.date === d), cfg));
   drawChart($('#trend'), { data: { labels: days.map(d => fmtDate(d, { day: '2-digit', month: 'short' })), datasets: [
-    { type: 'bar', label: 'Meters', data: daily.map(x => x.meters), backgroundColor: '#3d8fe0cc', borderRadius: 3, yAxisID: 'y' },
-    { type: 'line', label: 'Target', data: daily.map(x => Math.round(x.target * 10) / 10), borderColor: '#f3b440', borderDash: [5, 4], pointRadius: 0, yAxisID: 'y' },
-    { type: 'line', label: 'Completion %', data: daily.map(x => x.completionPct === null ? null : Math.round(x.completionPct)), borderColor: '#33c48a', tension: .3, pointRadius: 1, yAxisID: 'y2' },
+    { type: 'bar', label: 'Meters', data: daily.map(x => x.meters), backgroundColor: CHART.accent + 'd9', borderRadius: 3, yAxisID: 'y' },
+    { type: 'line', label: 'Target', data: daily.map(x => Math.round(x.target * 10) / 10), borderColor: CHART.target, borderDash: [5, 4], pointRadius: 0, yAxisID: 'y' },
+    { type: 'line', label: 'Completion %', data: daily.map(x => x.completionPct === null ? null : Math.round(x.completionPct)), borderColor: CHART.teal, tension: .3, pointRadius: 1, yAxisID: 'y2' },
   ] }, options: { scales: { y: { beginAtZero: true }, y2: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { callback: v => v + '%' } } } } });
 
   const head = `<th class="num">Eng. days</th><th class="num">Booked</th><th class="num">Completed</th><th class="num">Meters</th><th class="num">Target</th><th class="num">vs target</th><th class="num">Per day</th><th class="num">Completion</th><th class="num">Abort %</th><th class="num">Miles/meter</th><th class="num">Attendance</th>`;

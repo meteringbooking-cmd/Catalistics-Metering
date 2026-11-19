@@ -54,7 +54,7 @@ await logbook($('#book'), {
     { label: 'Approve', kind: 'good', show: r => (r.status || 'Pending') === 'Pending', run: (r, api) => setStatus([r], 'Approved', api) },
     { label: 'Reject', kind: 'danger', show: r => (r.status || 'Pending') === 'Pending', run: (r, api) => setStatus([r], 'Rejected', api) },
   ],
-  toolbar: [{ label: '✓ Approve all shown', kind: 'good', onClick: async api => {
+  toolbar: [{ label: 'Approve all shown', icon: 'check', kind: 'good', onClick: async api => {
     const p = api.visible.filter(r => (r.status || 'Pending') === 'Pending');
     if (!p.length) { toast('No pending claims shown'); return; }
     if (await confirmBox(`Approve ${p.length} pending claim(s) worth ${fmtMoney(p.reduce((t, r) => t + num(r.amount), 0), 2)}?`, { okLabel: 'Approve' })) setStatus(p, 'Approved', api);

@@ -26,8 +26,8 @@
   .hero .kpi .sub { font-size: 2.3vh; }
   .hero .kpi .bar { height: 1.2vh; border-radius: 1vh; }
   .board { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4vh 3vw; }
-  .board .item { display: flex; align-items: center; gap: 1.5vw; font-size: 3.2vh; padding: 1.4vh 1.5vw; background: var(--panel); border: 1px solid var(--line); border-radius: 1.4vh; }
-  .board .pos { font-family: var(--display); font-weight: 800; color: var(--accent-2); width: 3vw; }
+  .board .item { display: flex; align-items: center; gap: 1.5vw; font-size: 3.2vh; padding: 1.4vh 1.5vw; background: var(--panel); border: 1px solid var(--line); border-radius: 1.4vh; box-shadow: var(--shadow-sm); }
+  .board .pos { font-family: var(--display); font-weight: 800; color: var(--accent); width: 3vw; }
   .board .val { margin-left: auto; font-family: var(--display); font-weight: 700; }
   .dots { display: flex; gap: .8vw; justify-content: center; padding-top: 1vh; }
   .dots span { width: 1vh; height: 1vh; border-radius: 50%; background: var(--line-2); }
@@ -40,7 +40,7 @@
 <div id="app" hidden>
 <main class="page" style="padding:0">
   <div class="os">
-    <div class="os-head"><img src="assets/logo.png" alt="Catalistics"><div><div class="client" id="client"></div><div class="muted" id="sub"></div></div>
+    <div class="os-head"><img src="assets/logo-dark.png" alt="Catalistics"><div><div class="client" id="client"></div><div class="muted" id="sub"></div></div>
       <div class="clock"><span id="clock"></span><small id="date"></small></div></div>
     <div id="slides" style="flex:1;display:flex;flex-direction:column"></div>
     <div class="dots" id="dots"></div>
@@ -76,12 +76,12 @@ async function build() {
       </div>`);
   }
   const top = perf.filter(r => r.date === day).sort((a, b) => b.metersInstalled - a.metersInstalled).slice(0, 10);
-  if (top.length) slides.push(`<h2>⭐ Top performers yesterday</h2><div class="board">${top.map((r, i) => `<div class="item"><span class="pos">${i + 1}</span>${esc(r.engineerName)}<span class="val">${fmtNum(r.metersInstalled)}</span></div>`).join('')}</div>`);
+  if (top.length) slides.push(`<h2>Top performers yesterday</h2><div class="board">${top.map((r, i) => `<div class="item"><span class="pos">${i + 1}</span>${esc(r.engineerName)}<span class="val">${fmtNum(r.metersInstalled)}</span></div>`).join('')}</div>`);
   const monthTop = [...groupBy(perf, r => r.engineerId).values()].map(rs => ({ name: rs[0].engineerName, ...aggregate(rs, cfg) }))
     .filter(x => x.days >= 3).sort((a, b) => (b.metersPerDay || 0) - (a.metersPerDay || 0)).slice(0, 10);
-  if (monthTop.length) slides.push(`<h2>🏆 Month to date · meters per day</h2><div class="board">${monthTop.map((r, i) => `<div class="item"><span class="pos">${i + 1}</span>${esc(r.name)}<span class="val">${fmtNum(r.metersPerDay, 2)}</span></div>`).join('')}</div>`);
+  if (monthTop.length) slides.push(`<h2>Month to date · meters per day</h2><div class="board">${monthTop.map((r, i) => `<div class="item"><span class="pos">${i + 1}</span>${esc(r.name)}<span class="val">${fmtNum(r.metersPerDay, 2)}</span></div>`).join('')}</div>`);
   const s = attendanceSummary(att, cfg);
-  slides.push(`<h2>🙋 Attendance yesterday</h2><div class="hero">
+  slides.push(`<h2>Attendance yesterday</h2><div class="hero">
     <div class="kpi first ${rag(s.attendancePct, cfg.targets.attendanceTarget)}"><div class="label">Attendance</div><div class="value">${fmtPct(s.attendancePct, 0)}</div><div class="sub">Target ${cfg.targets.attendanceTarget}%</div></div>
     <div class="kpi"><div class="label">At work</div><div class="value">${s.present}</div><div class="sub">${s.working} on jobs</div></div>
     <div class="kpi ${s.sickness ? 'warn' : ''}"><div class="label">Sick / absent</div><div class="value">${s.sickness + s.absence}</div><div class="sub">${s.holiday} on holiday</div></div></div>`);

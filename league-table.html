@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>League Table</title>
 <link rel="stylesheet" href="assets/app.css">
-<style>.medal { font-size: 18px; } .scorebar { height: 6px; border-radius: 3px; background: var(--line); width: 90px; display: inline-block; vertical-align: middle; margin-left: 8px; overflow: hidden; } .scorebar span { display: block; height: 100%; background: var(--accent); }</style>
+<style>.medal { width: 56px; } .scorebar { height: 6px; border-radius: 3px; background: var(--line); width: 90px; display: inline-block; vertical-align: middle; margin-left: 8px; overflow: hidden; } .scorebar span { display: block; height: 100%; background: var(--accent-2); }</style>
 </head>
 <body>
 <div id="app" hidden>
@@ -16,7 +16,7 @@
     <div id="presets"></div>
     <label class="field">Contract<span id="cWrap"></span></label>
     <label class="field">Minimum days worked<input type="number" id="minDays" min="1" style="width:90px"></label>
-    <div class="spacer"></div><button class="btn" id="export" type="button">⬇ Export</button>
+    <div class="spacer"></div><button class="btn" id="export" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg> Export</button>
   </div>
   <div class="tabs"><button class="on" data-t="eng" type="button">Engineers</button><button data-t="team" type="button">Teams</button></div>
   <div class="table-wrap" style="--max-h:75vh"><table class="table" id="tbl"></table></div>
@@ -58,11 +58,11 @@ async function load() {
   ranked = list.sort((p, q) => q.score - p.score);
   draw();
 }
-const medal = i => ['🥇', '🥈', '🥉'][i] || i + 1;
+const medal = i => `<span class="rank ${i < 3 ? 'r' + (i + 1) : ''}">${i + 1}</span>`;
 function draw() {
   if (view === 'eng') {
     $('#tbl').innerHTML = `<thead><tr><th>Rank</th><th>Engineer</th><th>Team</th><th class="num">Days</th><th class="num">Meters</th><th class="num">Per day</th><th class="num">vs target</th><th class="num">Completion</th><th class="num">Abort %</th><th class="num">Attendance</th><th class="num">Compliance</th><th class="num">Score</th></tr></thead>
-    <tbody>${ranked.map((x, i) => { const c = contractOf(x.contractId); return `<tr class="${i < 3 ? 'row-good' : i >= ranked.length - 3 && ranked.length > 6 ? 'row-bad' : ''}"><td class="medal" data-v="${i + 1}">${medal(i)}</td><td><b>${esc(x.name)}</b></td><td>${esc(teamOf(x.teamId)?.name || '–')}</td>
+    <tbody>${ranked.map((x, i) => { const c = contractOf(x.contractId); return `<tr class="${i < 3 ? 'row-good' : i >= ranked.length - 3 && ranked.length > 6 ? 'row-bad' : ''}"><td class="medal" data-v="${i + 1}">${medal(i)}</td><td class="nowrap"><b>${esc(x.name)}</b></td><td class="nowrap">${esc(teamOf(x.teamId)?.name || '–')}</td>
       <td class="num">${x.a.days}</td><td class="num">${fmtNum(x.a.meters)}</td><td class="num">${fmtNum(x.a.metersPerDay, 2)}</td><td class="num cell-${rag(x.a.targetPct, 100)}">${fmtPct(x.a.targetPct, 0)}</td>
       <td class="num cell-${rag(x.a.completionPct, c?.completionTarget)}">${fmtPct(x.a.completionPct, 0)}</td><td class="num cell-${rag(x.a.abortPct, c?.abortRateMax, { higher: false })}">${fmtPct(x.a.abortPct, 1)}</td>
       <td class="num cell-${rag(x.att, cfg.targets.attendanceTarget)}">${fmtPct(x.att, 0)}</td><td class="num ${x.comp === null ? 'cell-muted' : 'cell-' + rag(x.comp, cfg.targets.complianceTarget)}">${x.comp === null ? 'no audits' : fmtPct(x.comp, 0)}</td>

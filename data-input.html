@@ -34,7 +34,7 @@
 </main>
 </div>
 <script type="module">
-import { initPage, C, db, doc, setDoc, serverTimestamp, $, $$, esc, el, options, toast, confirmBox, uid, slug,
+import { initPage, icon, C, db, doc, setDoc, serverTimestamp, $, $$, esc, el, options, toast, confirmBox, uid, slug,
   DEFAULT_CONFIG, mergeConfig, state } from './assets/app.js';
 
 const ctx = await initPage({ roles: ['admin'] });
@@ -61,7 +61,7 @@ function fieldsEditor(obj, defs) {
 }
 function tableEditor(arr, cols, { newItem, addLabel = 'Add row', note = '' } = {}) {
   const box = el(`<div><div class="table-wrap"><table class="table editor"><thead><tr>${cols.map(c => `<th>${esc(c.label)}</th>`).join('')}<th></th></tr></thead><tbody></tbody></table></div>
-    <div class="row" style="margin-top:10px"><button class="btn sm" type="button">+ ${esc(addLabel)}</button><span class="help">${esc(note)}</span></div></div>`);
+    <div class="row" style="margin-top:12px"><button class="btn sm" type="button">${icon('plus', 14)} ${esc(addLabel)}</button><span class="help">${esc(note)}</span></div></div>`);
   const tbody = $('tbody', box);
   const draw = () => {
     tbody.innerHTML = '';
@@ -71,7 +71,7 @@ function tableEditor(arr, cols, { newItem, addLabel = 'Add row', note = '' } = {
         const v = item[c.key];
         const opts = typeof c.options === 'function' ? c.options() : c.options;
         const html = c.type === 'checkbox' ? `<input type="checkbox" ${v !== false ? 'checked' : ''}>`
-          : c.type === 'color' ? `<input type="color" value="${esc(v || '#3d8fe0')}">`
+          : c.type === 'color' ? `<input type="color" value="${esc(v || '#4f46e5')}">`
           : c.type === 'select' ? `<select>${options(opts, v)}</select>`
           : c.type === 'number' ? `<input type="number" step="any" value="${esc(v)}">`
           : `<input type="text" value="${esc(v)}">`;
@@ -83,7 +83,7 @@ function tableEditor(arr, cols, { newItem, addLabel = 'Add row', note = '' } = {
         };
         tr.append(td);
       }
-      const del = el(`<td class="actions"><button class="btn sm danger" type="button" title="Remove">✕</button></td>`);
+      const del = el(`<td class="actions"><button class="btn sm danger" type="button" title="Remove">${icon('x', 14)}</button></td>`);
       $('button', del).onclick = async () => {
         if (!(await confirmBox('Remove this row? Records that already use it will keep their saved value.', { okLabel: 'Remove', danger: true }))) return;
         arr.splice(i, 1); markDirty(); draw();
@@ -154,7 +154,7 @@ const TABS = {
       { key: 'milesPerMeterMax', label: 'Max miles / meter', type: 'number' },
       { key: 'revenuePerMeter', label: 'Revenue / meter', type: 'number' },
       { key: 'costPerEngineerDay', label: 'Cost / engineer day', type: 'number' },
-    ], { addLabel: 'Add contract', newItem: () => ({ ...structuredClone(DEFAULT_CONFIG.contracts[0]), id: 'contract-' + uid(), name: 'New contract', colour: '#a78bfa' }) }))],
+    ], { addLabel: 'Add contract', newItem: () => ({ ...structuredClone(DEFAULT_CONFIG.contracts[0]), id: 'contract-' + uid(), name: 'New contract', colour: '#7c3aed' }) }))],
 
   teams: ['Teams', () => section('Teams', 'Each engineer belongs to one team. Teams roll up to a contract.',
     tableEditor(w.teams, [
@@ -167,7 +167,7 @@ const TABS = {
     tableEditor(w.attendanceCodes, [
       { key: 'code', label: 'Code' }, { key: 'label', label: 'Meaning' },
       { key: 'type', label: 'Counts as', type: 'select', options: TYPES }, { key: 'colour', label: 'Colour', type: 'color' },
-    ], { addLabel: 'Add code', newItem: () => ({ code: '?', label: 'New code', type: 'working', colour: '#8ea2c4' }) }))],
+    ], { addLabel: 'Add code', newItem: () => ({ code: '?', label: 'New code', type: 'working', colour: '#64748b' }) }))],
 
   kpis: ['KPI targets', () => {
     const p = el('<div></div>');
@@ -269,8 +269,8 @@ const TABS = {
   backup: ['Backup', () => {
     const p = el(`<div class="card"><h2>Backup &amp; restore</h2>
       <p class="muted">Download these settings as a file, load them into another installation, or go back to the defaults.</p>
-      <div class="row"><button class="btn" id="dl" type="button">⬇ Download settings</button>
-      <label class="btn" style="cursor:pointer">⬆ Load settings file<input type="file" accept=".json" hidden id="ul"></label>
+      <div class="row"><button class="btn" id="dl" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg> Download settings</button>
+      <label class="btn" style="cursor:pointer"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/></svg> Load settings file<input type="file" accept=".json" hidden id="ul"></label>
       <button class="btn danger" id="reset" type="button">Reset to defaults</button></div></div>`);
     $('#dl', p).onclick = () => {
       const a = document.createElement('a');

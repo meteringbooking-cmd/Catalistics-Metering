@@ -14,7 +14,7 @@
   #thread { flex: 1; display: flex; flex-direction: column; gap: 14px; padding-bottom: 20px; }
   .msg { max-width: 88%; padding: 12px 16px; border-radius: 14px; line-height: 1.55; }
   .msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; white-space: pre-wrap; }
-  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; box-shadow: var(--shadow-sm); }
   .msg.bot.err { border-color: var(--warn); background: var(--warn-soft); }
   .msg .meta { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--faint); display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   .msg .meta button { all: unset; cursor: pointer; color: var(--muted); } .msg .meta button:hover { color: var(--text); }
@@ -24,20 +24,20 @@
   .md table { border-collapse: collapse; margin: .5em 0 .8em; font-size: 13px; width: 100%; display: block; overflow-x: auto; }
   .md th, .md td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; }
   .md th { background: var(--panel-2); color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
-  .md code { font-family: var(--mono); font-size: 12.5px; background: var(--bg-2); padding: 1px 5px; border-radius: 4px; }
-  .md strong { color: #fff; }
+  .md code { font-family: var(--mono); font-size: 12.5px; }
+  .md strong { color: var(--text); }
   .thinking { display: flex; align-items: center; gap: 10px; color: var(--muted); }
   .dots span { display: inline-block; width: 7px; height: 7px; margin-right: 3px; border-radius: 50%; background: var(--accent); animation: blink 1.2s infinite; }
   .dots span:nth-child(2) { animation-delay: .2s; } .dots span:nth-child(3) { animation-delay: .4s; }
   @keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
   .empty-state { text-align: center; padding: 30px 10px 10px; }
-  .empty-state img { width: 120px; opacity: .9; }
+  .empty-state img { width: 110px; }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
-  .chip { all: unset; cursor: pointer; padding: 9px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel); font-size: 13.5px; color: var(--text); }
+  .chip { all: unset; cursor: pointer; padding: 9px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel); font-size: 13.5px; color: var(--text); box-shadow: var(--shadow-sm); }
   .chip:hover { border-color: var(--accent); background: var(--accent-soft); }
   .composer { position: sticky; bottom: 0; padding: 12px 0 16px; background: linear-gradient(to top, var(--bg) 70%, transparent); }
-  .composer .box { display: flex; gap: 10px; align-items: flex-end; background: var(--panel); border: 1px solid var(--line-2); border-radius: 14px; padding: 8px 8px 8px 14px; }
-  .composer .box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .composer .box { display: flex; gap: 10px; align-items: flex-end; background: var(--panel); border: 1px solid var(--line-2); border-radius: 14px; padding: 8px 8px 8px 14px; box-shadow: var(--shadow); }
+  .composer .box:focus-within { border-color: var(--accent-2); box-shadow: 0 0 0 3px rgba(79,70,229,.15); }
   .composer textarea { flex: 1; border: 0; background: transparent; box-shadow: none !important; resize: none; min-height: 24px; max-height: 180px; padding: 6px 0; }
   .composer .hint { font-size: 11.5px; color: var(--faint); margin-top: 6px; text-align: center; }
 </style>
@@ -47,9 +47,9 @@
 <main class="page">
   <div class="chat">
     <div class="chat-head">
-      <img src="assets/logo-mark.png" alt="">
+      <img src="assets/logo-mark-dark.png" alt="">
       <div style="flex:1"><h1 id="aiName">Catalistics AI</h1><p>Ask about performance, attendance, quality, fleet, pay or finance. Answers come from your live figures.</p></div>
-      <button class="btn ghost" id="newChat" type="button">＋ New conversation</button>
+      <button class="btn" id="newChat" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New conversation</button>
     </div>
     <div id="thread"></div>
     <div class="composer">
@@ -85,7 +85,7 @@ async function md(text) {
 async function render() {
   const t = $('#thread');
   if (!thread.length) {
-    t.innerHTML = `<div class="empty-state"><img src="assets/logo-mark.png" alt=""><h2 style="margin-top:12px">What would you like to know?</h2>
+    t.innerHTML = `<div class="empty-state"><img src="assets/logo-mark-dark.png" alt=""><h2 style="margin-top:12px">What would you like to know?</h2>
       <p class="muted">Ask in plain English — for example about a team, an engineer, a contract or a date range.</p>
       <div class="chips">${(AI.suggestedQuestions || []).map(q => `<button class="chip" type="button">${esc(q)}</button>`).join('')}</div></div>`;
     $$('.chip', t).forEach(c => c.onclick = () => send(c.textContent));

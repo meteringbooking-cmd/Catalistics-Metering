@@ -35,7 +35,7 @@ async function missing() {
     <div class="kpi ${fails ? 'bad' : 'good'}"><div class="label">Failed checks</div><div class="value">${fails}</div><div class="sub">${checks.length} checks recorded</div></div>`;
   $('#missCount').className = 'badge ' + (miss.length ? 'bad' : 'good'); $('#missCount').textContent = miss.length;
   $('#missList').innerHTML = miss.length ? `<ul class="list-plain">${miss.map(a => `<li class="row">${esc(a.engineerName)}<span class="spacer"></span><span class="muted">${esc(teamOf(a.teamId)?.name || '')}</span></li>`).join('')}</ul>`
-    : `<div class="muted">${working.length ? 'Everyone working has a check. 👍' : 'No attendance recorded for this day.'}</div>`;
+    : `<div class="muted">${working.length ? 'Everyone working has a check.' : 'No attendance recorded for this day.'}</div>`;
 }
 $('#missDay').value = todayISO(); $('#missDay').onchange = missing; await missing();
 await logbook($('#book'), {

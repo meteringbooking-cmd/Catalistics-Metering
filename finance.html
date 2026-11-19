@@ -20,7 +20,7 @@
 </main>
 </div>
 <script type="module">
-import { initPage, C, $, esc, where, fetchRange, fetchAll, aggregate, fmtMoney, fmtNum, fmtPct, todayISO, monthStart, monthEnd, addMonths, workingDaysBetween,
+import { initPage, CHART, C, $, esc, where, fetchRange, fetchAll, aggregate, fmtMoney, fmtNum, fmtPct, todayISO, monthStart, monthEnd, addMonths, workingDaysBetween,
   activeContracts, contractName, drawChart, num, groupBy } from './assets/app.js';
 import { logbook } from './assets/logbook.js';
 
@@ -58,9 +58,9 @@ async function load() {
   const months = [5, 4, 3, 2, 1, 0].map(n => addMonths(m0, -n).slice(0, 7));
   const series = months.map(mm => { const x = aggregate(perf.filter(r => r.date.startsWith(mm)), cfg); const o = costs.filter(c => c.month === mm).reduce((t, c) => t + num(c.amount), 0); return { rev: x.revenue, cost: x.cost + o }; });
   drawChart($('#trend'), { data: { labels: months.map(mm => new Date(mm + '-01').toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })), datasets: [
-    { type: 'bar', label: 'Revenue', data: series.map(s => Math.round(s.rev)), backgroundColor: '#3d8fe0cc', borderRadius: 3 },
-    { type: 'bar', label: 'Costs', data: series.map(s => Math.round(s.cost)), backgroundColor: '#f06363aa', borderRadius: 3 },
-    { type: 'line', label: 'Margin', data: series.map(s => Math.round(s.rev - s.cost)), borderColor: '#33c48a', tension: .3 }] },
+    { type: 'bar', label: 'Revenue', data: series.map(s => Math.round(s.rev)), backgroundColor: CHART.accent + 'd9', borderRadius: 3 },
+    { type: 'bar', label: 'Costs', data: series.map(s => Math.round(s.cost)), backgroundColor: '#cbd2dc', borderRadius: 3 },
+    { type: 'line', label: 'Margin', data: series.map(s => Math.round(s.rev - s.cost)), borderColor: CHART.teal, tension: .3 }] },
     options: { scales: { y: { ticks: { callback: v => fmtMoney(v) } } } } });
 }
 $('#month').onchange = load;
