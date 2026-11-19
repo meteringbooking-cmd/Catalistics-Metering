@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Customer Payments</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Customer Payments</h1><p>Compensation and goodwill payments made to customers — for example missed appointments or failed installations.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+await logbook($('#book'), {
+  collection: C.customerPayments, dateField: 'date', defaultDays: 180, addLabel: 'Record payment', sheetName: 'Customer payments',
+  fields: [
+    { key: 'date', label: 'Date', type: 'date', required: true, default: () => todayISO() },
+    { key: 'jobRef', label: 'Job reference', type: 'text', required: true },
+    { key: 'customerRef', label: 'Customer ref', type: 'text' },
+    ...engineerFields({ required: false }),
+    { key: 'type', label: 'Payment type', type: 'select', options: c => c.lists.customerPaymentTypes, required: true, filter: true },
+    { key: 'amount', label: 'Amount', type: 'money', required: true },
+    { key: 'paid', label: 'Paid', type: 'checkbox' },
+    { key: 'notes', label: 'Notes', type: 'textarea', list: false },
+  ],
+  summary: (rows, el) => {
+    const tot = rows.reduce((t, r) => t + num(r.amount), 0);
+    const byT = [...groupBy(rows, r => r.type || '')];
+    el.innerHTML = `<div class="grid" style="--min:180px;margin-bottom:14px"><div class="kpi"><div class="label">Total paid out</div><div class="value">${fmtMoney(tot, 2)}</div><div class="sub">${rows.length} payment(s)</div></div>
+      ${byT.map(([t, rs]) => `<div class="kpi"><div class="label">${esc(t)}</div><div class="value">${fmtMoney(rs.reduce((s, r) => s + num(r.amount), 0), 2)}</div><div class="sub">${rs.length}</div></div>`).join('')}</div>`;
+  },
+}, ctx);
+</script>
+</body>
+</html>

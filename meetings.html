@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meetings</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Meetings</h1><p>One-to-ones, van audits, ride-alongs and reviews between team leaders and engineers. Upcoming meetings are listed first.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const today = todayISO();
+await logbook($('#book'), {
+  collection: C.meetings, dateField: 'date', defaultDays: 60, futureDays: 90, addLabel: 'Book meeting', sheetName: 'Meetings',
+  fields: [
+    { key: 'date', label: 'Date', type: 'date', required: true, default: () => today },
+    { key: 'time', label: 'Time', type: 'time' },
+    ...engineerFields(),
+    { key: 'type', label: 'Meeting type', type: 'select', options: c => c.lists.meetingTypes, required: true, filter: true },
+    { key: 'heldBy', label: 'Held by', type: 'text', default: () => ctx.profile.name || '' },
+    { key: 'status', label: 'Status', type: 'select', options: ['Booked', 'Completed', 'Cancelled', 'No show'], default: 'Booked', filter: true,
+      format: v => `<span class="badge ${{ Completed: 'good', Cancelled: '', 'No show': 'bad' }[v] ?? 'info'}">${esc(v || 'Booked')}</span>` },
+    { key: 'outcome', label: 'Outcome / actions', type: 'textarea', list: false },
+  ],
+  rowClass: r => (r.status || 'Booked') === 'Booked' && r.date < today ? 'row-warn' : '',
+  summary: (rows, el) => {
+    const up = rows.filter(r => r.date >= today && (r.status || 'Booked') === 'Booked').length;
+    const overdue = rows.filter(r => r.date < today && (r.status || 'Booked') === 'Booked').length;
+    const done = rows.filter(r => r.status === 'Completed');
+    el.innerHTML = `<div class="grid" style="--min:180px;margin-bottom:14px"><div class="kpi"><div class="label">Upcoming</div><div class="value">${up}</div></div>
+      <div class="kpi ${overdue ? 'warn' : ''}"><div class="label">Past but not closed</div><div class="value">${overdue}</div><div class="sub">Mark them completed or cancelled</div></div>
+      <div class="kpi good"><div class="label">Completed</div><div class="value">${done.length}</div></div></div>`;
+  },
+}, ctx);
+</script>
+</body>
+</html>

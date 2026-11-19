@@ -1,0 +1,72 @@
+rules_version = '2';
+
+// Catalistics — Firestore security rules.
+// Roles live in /users/{uid}.role: admin, manager or engineer.
+// Engineers can only read their own records, and can only create Pending claims for themselves.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn()     { return request.auth != null; }
+    function userPath()     { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function configPath()   { return /databases/$(database)/documents/settings/config; }
+    function profile()      { return get(userPath()).data; }
+    function active()       { return signedIn() && exists(userPath()) && profile().get('active', true) == true; }
+    function isAdmin()      { return active() && profile().role == 'admin'; }
+    function isStaff()      { return active() && profile().role in ['admin', 'manager']; }
+    function isEngineer()   { return active() && profile().role == 'engineer'; }
+    function myEngineerId() { return profile().get('engineerId', ''); }
+    function ownsRecord()   { return isEngineer() && resource.data.engineerId == myEngineerId(); }
+
+    // Settings: everyone signed in reads them; only admins change them.
+    // The very first save is allowed as part of first-time setup (see users rule).
+    match /settings/{id} {
+      allow read: if active();
+      allow create: if isAdmin() || (signedIn() && getAfter(userPath()).data.role == 'admin');
+      allow update, delete: if isAdmin();
+    }
+
+    // Users: people can read their own profile; admins manage everyone.
+    // A brand-new installation (no settings yet) lets the first person make themselves admin.
+    match /users/{userId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create: if isAdmin() || (signedIn() && request.auth.uid == userId
+                                     && request.resource.data.role == 'admin' && !exists(configPath()));
+      allow update, delete: if isAdmin();
+    }
+
+    // Engineer directory: staff manage it; an engineer can read their own entry.
+    match /engineers/{engineerId} {
+      allow read: if isStaff() || (isEngineer() && engineerId == myEngineerId());
+      allow write: if isStaff();
+    }
+
+    // Records an engineer can see for themselves in the portal.
+    match /dailyPerformance/{id}  { allow read: if isStaff() || ownsRecord(); allow write: if isStaff(); }
+    match /attendance/{id}        { allow read: if isStaff() || ownsRecord(); allow write: if isStaff(); }
+    match /bonusStatements/{id}   { allow read: if isStaff() || ownsRecord(); allow write: if isStaff(); }
+    match /qualifications/{id}    { allow read: if isStaff() || ownsRecord(); allow write: if isStaff(); }
+    match /additionalPayments/{id} {
+      allow read: if isStaff() || ownsRecord();
+      allow create: if isStaff() || (isEngineer()
+                                     && request.resource.data.engineerId == myEngineerId()
+                                     && request.resource.data.status == 'Pending');
+      allow update, delete: if isStaff();
+    }
+
+    // Published to the portal.
+    match /notifications/{id}   { allow read: if active(); allow write: if isStaff(); }
+    match /portalDocuments/{id} { allow read: if active(); allow write: if isStaff(); }
+
+    // AI usage log: written only by the Cloud Function (admin SDK); admins can read it.
+    match /aiUsage/{id} { allow read: if isAdmin(); allow write: if false; }
+
+    // Everything else is office-only.
+    match /{coll}/{id} {
+      allow read, write: if isStaff() && coll in [
+        'absences', 'scheduledJobs', 'vehicleChecks', 'vanJourneys', 'speedingIncidents',
+        'complianceAudits', 'complaints', 'jobRefusals', 'noAccessVisits', 'customerPayments',
+        'escalations', 'testerCalibrations', 'bonusAdjustments', 'financeEntries', 'onCallRota', 'meetings'
+      ];
+    }
+  }
+}

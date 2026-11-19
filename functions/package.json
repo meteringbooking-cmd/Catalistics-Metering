@@ -1,0 +1,12 @@
+{
+  "name": "catalistics-functions",
+  "description": "Catalistics AI — answers questions about the client's data using Claude",
+  "private": true,
+  "main": "index.js",
+  "engines": { "node": "22" },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.10.0",
+    "firebase-admin": "^14.5.1",
+    "firebase-functions": "^7.4.0"
+  }
+}

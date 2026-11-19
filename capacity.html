@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Capacity Planner</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Capacity Planner</h1><p>Available engineer-days for the weeks ahead: active engineers × working days, minus booked holiday, training and other planned codes from <a href="attendance.html">Attendance</a>, and open absences. Meter capacity uses each contract's daily target.</p></div></div>
+  <div class="toolbar">
+    <label class="field">Starting week<input type="date" id="start"></label>
+    <label class="field">Weeks<select id="weeks"><option>4</option><option selected>8</option><option>12</option></select></label>
+    <label class="field">Show<select id="show"><option value="days">Available engineer-days</option><option value="meters">Meter capacity</option><option value="pct">% of full capacity</option></select></label>
+    <div class="spacer"></div><button class="btn" id="export" type="button">⬇ Export</button>
+  </div>
+  <div class="table-wrap"><table class="table matrix" id="tbl"></table></div>
+  <p class="help" id="legend" style="margin-top:10px"></p>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, fetchRange, fetchAll, getEngineers, todayISO, weekStart, addDays, workingDaysBetween, codeOf, contractOf, fmtNum, fmtPct, fmtDate, activeContracts, exportXlsx } from './assets/app.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+$('#start').value = weekStart(todayISO());
+$('#legend').textContent = `Colour shows the share of full capacity available: green ${cfg.targets.capacityGoodPct}%+, amber ${cfg.targets.capacityWarnPct}–${cfg.targets.capacityGoodPct}%, red below ${cfg.targets.capacityWarnPct}%. Set on Targets & KPIs.`;
+let table = [];
+async function load() {
+  const start = weekStart($('#start').value), n = Number($('#weeks').value), show = $('#show').value;
+  const weeks = Array.from({ length: n }, (_, i) => addDays(start, i * 7));
+  const end = addDays(weeks[weeks.length - 1], 6);
+  const [engineers, att, abs] = await Promise.all([getEngineers(), fetchRange(C.attendance, start, end), fetchAll(C.absences)]);
+  const planned = new Set(att.filter(a => ['holiday', 'off', 'nonProductive', 'sickness', 'absence'].includes(codeOf(a.code)?.type)).map(a => `${a.date}_${a.engineerId}`));
+  const openAbs = abs.filter(a => (a.endDate || '9999-12-31') >= start && a.startDate <= end);
+  const lost = (eid, d) => planned.has(`${d}_${eid}`) || openAbs.some(a => a.engineerId === eid && a.startDate <= d && (a.endDate || '9999-12-31') >= d);
+  const cell = (engs, w, contract) => {
+    const days = workingDaysBetween(w, addDays(w, 6));
+    const full = engs.length * days.length;
+    let avail = 0; for (const e of engs) for (const d of days) if (!lost(e.id, d)) avail++;
+    return { full, avail, meters: avail * Number(contract?.dailyMeterTarget || 0), pct: full ? avail / full * 100 : null };
+  };
+  const fmt = c => show === 'meters' ? fmtNum(c.meters) : show === 'pct' ? fmtPct(c.pct, 0) : `${c.avail}<span class="faint" style="font-size:11px"> / ${c.full}</span>`;
+  const G = cfg.targets.capacityGoodPct, A = cfg.targets.capacityWarnPct;
+  const cls = c => c.pct === null ? '' : c.pct >= G ? 'cell-good' : c.pct >= A ? 'cell-warn' : 'cell-bad';
+  table = [];
+  let html = `<thead><tr><th>Team</th><th>Engineers</th>${weeks.map(w => `<th>w/c ${fmtDate(w, { day: '2-digit', month: 'short' })}<div class="faint" style="font-size:10px">${workingDaysBetween(w, addDays(w, 6)).length} days</div></th>`).join('')}</tr></thead><tbody>`;
+  for (const c of activeContracts(cfg)) {
+    html += `<tr class="group-row"><td colspan="${weeks.length + 2}">${esc(c.name)}</td></tr>`;
+    const teams = cfg.teams.filter(t => t.contractId === c.id);
+    for (const t of teams) {
+      const engs = engineers.filter(e => e.teamId === t.id);
+      const cells = weeks.map(w => cell(engs, w, c));
+      html += `<tr><td>${esc(t.name)} <span class="faint">· ${esc(t.leader)}</span></td><td>${engs.length}</td>${cells.map(x => `<td class="${cls(x)}">${fmt(x)}</td>`).join('')}</tr>`;
+      table.push({ Contract: c.name, Team: t.name, Engineers: engs.length, ...Object.fromEntries(weeks.flatMap((w, i) => [[`${w} available days`, cells[i].avail], [`${w} meter capacity`, cells[i].meters]])) });
+    }
+    const engs = engineers.filter(e => e.contractId === c.id);
+    const tot = weeks.map(w => cell(engs, w, c));
+    html += `<tr class="total-row"><td>${esc(c.name)} total</td><td>${engs.length}</td>${tot.map(x => `<td class="${cls(x)}">${fmt(x)}</td>`).join('')}</tr>`;
+  }
+  $('#tbl').innerHTML = html + '</tbody>';
+}
+['start', 'weeks', 'show'].forEach(id => $('#' + id).onchange = load);
+$('#export').onclick = () => exportXlsx(`capacity-${$('#start').value}`, { Capacity: table });
+load();
+</script>
+</body>
+</html>

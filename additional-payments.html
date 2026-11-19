@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Additional Payments</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Additional Payments</h1><p>Claims for standby, overtime, working away and other extras. Engineers can submit claims from their portal; the office can add them here too. Amount = quantity × rate — rates come from <a href="data-input.html?tab=lists">Targets &amp; KPIs</a>.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, db, doc, $, esc, setDoc, num, fmtMoney, todayISO, stamp, commitInBatches, toast, confirmBox } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const types = cfg.lists.paymentTypes;
+const setStatus = async (rows, status, api) => {
+  await commitInBatches(rows.map(r => ({ type: 'set', merge: true, ref: doc(db, C.additionalPayments, r.id), data: stamp({ status, decidedBy: ctx.user.email, decidedOn: todayISO() }) })));
+  toast(`${rows.length} claim(s) ${status.toLowerCase()}`, 'good'); api.reload();
+};
+const badge = s => `<span class="badge ${{ Approved: 'good', Rejected: 'bad', Pending: 'warn' }[s] || ''}">${esc(s || 'Pending')}</span>`;
+
+await logbook($('#book'), {
+  collection: C.additionalPayments, dateField: 'date', defaultDays: 60, addLabel: 'Add claim', sheetName: 'Claims',
+  fields: [
+    { key: 'date', label: 'Date worked', type: 'date', required: true, default: () => todayISO() },
+    ...engineerFields(),
+    { key: 'type', label: 'Type', type: 'select', options: () => types.map(t => t.name), required: true, filter: true },
+    { key: 'quantity', label: 'Quantity', type: 'number', required: true, default: 1, help: 'Days, hours, nights or jobs — whatever the type is paid by.' },
+    { key: 'rate', label: 'Rate', type: 'money', help: 'Filled in from the payment type; change it if this claim is different.' },
+    { key: 'amount', label: 'Amount', type: 'money', form: false },
+    { key: 'status', label: 'Status', type: 'select', options: ['Pending', 'Approved', 'Rejected'], default: 'Pending', filter: true, format: v => badge(v) },
+    { key: 'source', label: 'Submitted via', type: 'text', form: false, list: false },
+    { key: 'notes', label: 'Notes', type: 'textarea', list: false },
+    { key: 'decisionNote', label: 'Office comment', type: 'text', list: false },
+  ],
+  onFormOpen: (form) => {
+    const sel = form.querySelector('#f_type'), rate = form.querySelector('#f_rate');
+    sel.addEventListener('change', () => { const t = types.find(x => x.name === sel.value); if (t) rate.value = t.rate; });
+  },
+  beforeSave: d => {
+    if (d.rate === '' || d.rate === undefined) d.rate = types.find(t => t.name === d.type)?.rate ?? 0;
+    d.amount = Math.round(num(d.quantity) * num(d.rate) * 100) / 100;
+    d.status = d.status || 'Pending';
+    return d;
+  },
+  rowClass: r => (r.status || 'Pending') === 'Pending' ? 'row-warn' : '',
+  rowActions: [
+    { label: 'Approve', kind: 'good', show: r => (r.status || 'Pending') === 'Pending', run: (r, api) => setStatus([r], 'Approved', api) },
+    { label: 'Reject', kind: 'danger', show: r => (r.status || 'Pending') === 'Pending', run: (r, api) => setStatus([r], 'Rejected', api) },
+  ],
+  toolbar: [{ label: '✓ Approve all shown', kind: 'good', onClick: async api => {
+    const p = api.visible.filter(r => (r.status || 'Pending') === 'Pending');
+    if (!p.length) { toast('No pending claims shown'); return; }
+    if (await confirmBox(`Approve ${p.length} pending claim(s) worth ${fmtMoney(p.reduce((t, r) => t + num(r.amount), 0), 2)}?`, { okLabel: 'Approve' })) setStatus(p, 'Approved', api);
+  } }],
+  summary: (rows, el) => {
+    const sum = s => rows.filter(r => (r.status || 'Pending') === s);
+    const v = list => fmtMoney(list.reduce((t, r) => t + num(r.amount), 0), 2);
+    el.innerHTML = `<div class="grid" style="--min:180px;margin-bottom:14px">
+      <div class="kpi warn"><div class="label">Pending</div><div class="value">${v(sum('Pending'))}</div><div class="sub">${sum('Pending').length} claim(s)</div></div>
+      <div class="kpi good"><div class="label">Approved</div><div class="value">${v(sum('Approved'))}</div><div class="sub">${sum('Approved').length} claim(s)</div></div>
+      <div class="kpi"><div class="label">Rejected</div><div class="value">${v(sum('Rejected'))}</div><div class="sub">${sum('Rejected').length} claim(s)</div></div></div>`;
+  },
+}, ctx);
+</script>
+</body>
+</html>

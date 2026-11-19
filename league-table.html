@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>League Table</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>.medal { font-size: 18px; } .scorebar { height: 6px; border-radius: 3px; background: var(--line); width: 90px; display: inline-block; vertical-align: middle; margin-left: 8px; overflow: hidden; } .scorebar span { display: block; height: 100%; background: var(--accent); }</style>
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>League Table</h1><p id="explain"></p></div></div>
+  <div class="toolbar">
+    <label class="field">From<input type="date" id="from"></label><label class="field">To<input type="date" id="to"></label>
+    <div id="presets"></div>
+    <label class="field">Contract<span id="cWrap"></span></label>
+    <label class="field">Minimum days worked<input type="number" id="minDays" min="1" style="width:90px"></label>
+    <div class="spacer"></div><button class="btn" id="export" type="button">⬇ Export</button>
+  </div>
+  <div class="tabs"><button class="on" data-t="eng" type="button">Engineers</button><button data-t="team" type="button">Teams</button></div>
+  <div class="table-wrap" style="--max-h:75vh"><table class="table" id="tbl"></table></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, $$, esc, fetchRange, aggregate, attendanceSummary, groupBy, fmtNum, fmtPct, rangePreset, presetButtons, contractSelect, teamOf, contractOf, rag, exportXlsx, makeSortable } from './assets/app.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const W = cfg.league.weights; const wSum = Object.values(W).reduce((t, v) => t + Number(v || 0), 0) || 1;
+$('#explain').textContent = `Each engineer is scored against everyone else in the table on five measures, weighted: meters vs target ${Math.round(W.meters / wSum * 100)}%, completion ${Math.round(W.completion / wSum * 100)}%, low aborts ${Math.round(W.aborts / wSum * 100)}%, attendance ${Math.round(W.attendance / wSum * 100)}%, compliance ${Math.round(W.compliance / wSum * 100)}%. Weights are set on Targets & KPIs.`;
+$('#cWrap').innerHTML = contractSelect('contract');
+$('#minDays').value = cfg.targets.leagueMinDays;
+[$('#from').value, $('#to').value] = rangePreset('mtd');
+$('#presets').append(presetButtons((f, t) => { $('#from').value = f; $('#to').value = t; load(); }));
+['from', 'to', 'contract', 'minDays'].forEach(id => $('#' + id).onchange = load);
+let view = 'eng', ranked = [];
+$$('.tabs button').forEach(b => b.onclick = () => { view = b.dataset.t; $$('.tabs button').forEach(x => x.classList.toggle('on', x === b)); draw(); });
+
+async function load() {
+  const from = $('#from').value, to = $('#to').value, cid = $('#contract').value, minDays = Number($('#minDays').value) || 1;
+  const keep = r => !cid || r.contractId === cid;
+  const [perf, att, audits] = await Promise.all([fetchRange(C.dailyPerformance, from, to), fetchRange(C.attendance, from, to), fetchRange(C.complianceAudits, from, to)]);
+  const attBy = groupBy(att.filter(keep), r => r.engineerId), audBy = groupBy(audits, r => r.engineerId);
+  const list = [...groupBy(perf.filter(keep), r => r.engineerId).values()].map(rs => {
+    const last = rs[rs.length - 1], a = aggregate(rs, cfg), s = attendanceSummary(attBy.get(last.engineerId) || [], cfg);
+    const au = audBy.get(last.engineerId) || [];
+    const comp = au.length ? au.filter(x => x.result === 'Pass').length / au.length * 100 : null;
+    return { id: last.engineerId, name: last.engineerName, teamId: last.teamId, contractId: last.contractId, a, att: s.attendancePct, comp, audits: au.length,
+      m: { meters: a.targetPct, completion: a.completionPct, aborts: a.abortPct === null ? null : -a.abortPct, attendance: s.attendancePct, compliance: comp } };
+  }).filter(x => x.a.days >= minDays);
+  // Scale each measure 0–100 across the people in the table; missing values take the average.
+  for (const k of Object.keys(W)) {
+    const vals = list.map(x => x.m[k]).filter(v => v !== null && Number.isFinite(v));
+    const lo = Math.min(...vals), hi = Math.max(...vals), mean = vals.reduce((t, v) => t + v, 0) / (vals.length || 1);
+    for (const x of list) { const v = x.m[k] ?? mean; x[`s_${k}`] = hi > lo ? (v - lo) / (hi - lo) * 100 : 100; }
+  }
+  for (const x of list) x.score = Object.keys(W).reduce((t, k) => t + x[`s_${k}`] * Number(W[k] || 0), 0) / wSum;
+  ranked = list.sort((p, q) => q.score - p.score);
+  draw();
+}
+const medal = i => ['🥇', '🥈', '🥉'][i] || i + 1;
+function draw() {
+  if (view === 'eng') {
+    $('#tbl').innerHTML = `<thead><tr><th>Rank</th><th>Engineer</th><th>Team</th><th class="num">Days</th><th class="num">Meters</th><th class="num">Per day</th><th class="num">vs target</th><th class="num">Completion</th><th class="num">Abort %</th><th class="num">Attendance</th><th class="num">Compliance</th><th class="num">Score</th></tr></thead>
+    <tbody>${ranked.map((x, i) => { const c = contractOf(x.contractId); return `<tr class="${i < 3 ? 'row-good' : i >= ranked.length - 3 && ranked.length > 6 ? 'row-bad' : ''}"><td class="medal" data-v="${i + 1}">${medal(i)}</td><td><b>${esc(x.name)}</b></td><td>${esc(teamOf(x.teamId)?.name || '–')}</td>
+      <td class="num">${x.a.days}</td><td class="num">${fmtNum(x.a.meters)}</td><td class="num">${fmtNum(x.a.metersPerDay, 2)}</td><td class="num cell-${rag(x.a.targetPct, 100)}">${fmtPct(x.a.targetPct, 0)}</td>
+      <td class="num cell-${rag(x.a.completionPct, c?.completionTarget)}">${fmtPct(x.a.completionPct, 0)}</td><td class="num cell-${rag(x.a.abortPct, c?.abortRateMax, { higher: false })}">${fmtPct(x.a.abortPct, 1)}</td>
+      <td class="num cell-${rag(x.att, cfg.targets.attendanceTarget)}">${fmtPct(x.att, 0)}</td><td class="num ${x.comp === null ? 'cell-muted' : 'cell-' + rag(x.comp, cfg.targets.complianceTarget)}">${x.comp === null ? 'no audits' : fmtPct(x.comp, 0)}</td>
+      <td class="num" data-v="${x.score}"><b>${fmtNum(x.score, 1)}</b><span class="scorebar"><span style="width:${x.score}%"></span></span></td></tr>`; }).join('') || '<tr><td colspan="12" class="empty">No engineers meet the minimum days in this range.</td></tr>'}</tbody>`;
+  } else {
+    const teams = [...groupBy(ranked, x => x.teamId || '')].map(([tid, xs]) => ({ t: teamOf(tid), n: xs.length, score: xs.reduce((s, x) => s + x.score, 0) / xs.length,
+      a: aggregate([], cfg), meters: xs.reduce((s, x) => s + x.a.meters, 0), target: xs.reduce((s, x) => s + x.a.target, 0), best: xs[0]?.name })).sort((p, q) => q.score - p.score);
+    $('#tbl').innerHTML = `<thead><tr><th>Rank</th><th>Team</th><th>Team leader</th><th class="num">Engineers</th><th class="num">Meters</th><th class="num">vs target</th><th>Top engineer</th><th class="num">Average score</th></tr></thead>
+    <tbody>${teams.map((x, i) => `<tr><td class="medal" data-v="${i + 1}">${medal(i)}</td><td><b>${esc(x.t?.name || 'No team')}</b></td><td>${esc(x.t?.leader || '')}</td><td class="num">${x.n}</td><td class="num">${fmtNum(x.meters)}</td>
+      <td class="num cell-${rag(x.target ? x.meters / x.target * 100 : null, 100)}">${fmtPct(x.target ? x.meters / x.target * 100 : null, 0)}</td><td>${esc(x.best || '')}</td><td class="num" data-v="${x.score}"><b>${fmtNum(x.score, 1)}</b><span class="scorebar"><span style="width:${x.score}%"></span></span></td></tr>`).join('')}</tbody>`;
+  }
+  makeSortable($('#tbl'));
+}
+$('#export').onclick = () => exportXlsx(`league-table-${$('#from').value}-to-${$('#to').value}`, { League: ranked.map((x, i) => ({ Rank: i + 1, Engineer: x.name, Team: teamOf(x.teamId)?.name || '', 'Days worked': x.a.days, Meters: x.a.meters,
+  'Meters per day': Math.round((x.a.metersPerDay || 0) * 100) / 100, 'vs target %': Math.round(x.a.targetPct || 0), 'Completion %': Math.round(x.a.completionPct || 0), 'Abort %': Math.round((x.a.abortPct || 0) * 10) / 10,
+  'Attendance %': x.att === null ? '' : Math.round(x.att), 'Compliance %': x.comp === null ? '' : Math.round(x.comp), Score: Math.round(x.score * 10) / 10 })) });
+load();
+</script>
+</body>
+</html>

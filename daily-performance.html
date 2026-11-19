@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Performance</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Daily Performance</h1><p>One working day, team by team, against each contract's targets. Engineers with an attendance code but no figures are shown so nobody is missed.</p></div></div>
+  <div class="toolbar">
+    <label class="field">Day<input type="date" id="day"></label>
+    <button class="btn sm" id="prev" type="button">◀ Previous</button><button class="btn sm" id="next" type="button">Next ▶</button>
+    <label class="field">Contract<span id="cWrap"></span></label>
+    <div class="spacer"></div><button class="btn" id="export" type="button">⬇ Export</button>
+  </div>
+  <div class="grid" id="kpis" style="--min:170px;margin-bottom:16px"></div>
+  <div class="table-wrap"><table class="table" id="tbl"></table></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, fetchRange, getEngineers, prevWorkingDay, addDays, isWorkingDay, aggregate, attendanceSummary, rag, fmtNum, fmtPct,
+  contractSelect, contractOf, codeChip, exportXlsx, teamOf } from './assets/app.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+$('#cWrap').innerHTML = contractSelect('contract');
+const qs = new URLSearchParams(location.search);
+$('#day').value = qs.get('date') || prevWorkingDay();
+let lastRows = [];
+
+const step = dir => { let d = addDays($('#day').value, dir); let g = 0; while (!isWorkingDay(d) && g++ < 10) d = addDays(d, dir); $('#day').value = d; load(); };
+$('#prev').onclick = () => step(-1); $('#next').onclick = () => step(1);
+$('#day').onchange = load; $('#contract').onchange = load;
+
+async function load() {
+  const day = $('#day').value, cid = $('#contract').value;
+  const [perf, att, engineers] = await Promise.all([fetchRange(C.dailyPerformance, day, day), fetchRange(C.attendance, day, day), getEngineers({ includeLeavers: true })]);
+  const pf = perf.filter(r => !cid || r.contractId === cid);
+  const af = att.filter(r => !cid || r.contractId === cid);
+  const a = aggregate(pf, cfg), s = attendanceSummary(af, cfg);
+  $('#kpis').innerHTML = [
+    ['Meters', fmtNum(a.meters), `Target ${fmtNum(a.target, 1)} (${fmtPct(a.targetPct, 0)})`, rag(a.targetPct, 100)],
+    ['Jobs completed', fmtNum(a.completed), `of ${fmtNum(a.booked)} booked`, ''],
+    ['Completion', fmtPct(a.completionPct), '', ''],
+    ['Aborts', fmtNum(a.aborts), fmtPct(a.abortPct) + ' of booked', ''],
+    ['Miles / meter', fmtNum(a.milesPerMeter, 1), `${fmtNum(a.miles)} miles`, ''],
+    ['Attendance', fmtPct(s.attendancePct), `${s.present} at work · ${s.sickness} sick`, rag(s.attendancePct, cfg.targets.attendanceTarget)],
+  ].map(([l, v, sub, c]) => `<div class="kpi ${c}"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join('');
+
+  // Merge performance + attendance per engineer
+  const byEng = new Map();
+  for (const r of pf) byEng.set(r.engineerId, { eng: r.engineerId, name: r.engineerName, teamId: r.teamId, contractId: r.contractId, perf: r });
+  for (const r of af) { const x = byEng.get(r.engineerId) || { eng: r.engineerId, name: r.engineerName, teamId: r.teamId, contractId: r.contractId }; x.code = r.code; byEng.set(r.engineerId, x); }
+  const list = [...byEng.values()];
+  const teams = cfg.teams.filter(t => !cid || t.contractId === cid);
+  const teamIds = [...teams.map(t => t.id), ''];
+  lastRows = [];
+  let html = `<thead><tr><th>Engineer</th><th>Code</th><th class="num">Booked</th><th class="num">Completed</th><th class="num">Meters</th><th class="num">Target</th><th class="num">vs target</th><th class="num">Completion</th><th class="num">Aborts</th><th class="num">No access</th><th class="num">Miles</th><th class="num">Miles/meter</th></tr></thead><tbody>`;
+  for (const tid of teamIds) {
+    const rows = list.filter(x => (x.teamId || '') === tid).sort((p, q) => String(p.name).localeCompare(String(q.name), 'en', { numeric: true }));
+    if (!rows.length) continue;
+    const t = teamOf(tid);
+    html += `<tr class="group-row"><td colspan="12">${t ? `${esc(t.name)} — ${esc(t.leader)}` : 'No team'}</td></tr>`;
+    for (const x of rows) {
+      const p = x.perf || {}; const c = contractOf(x.contractId) || {};
+      const tgt = x.perf ? Number(c.dailyMeterTarget || 0) : 0;
+      const vs = tgt ? (p.metersInstalled / tgt) * 100 : null;
+      const comp = p.jobsBooked ? (p.jobsCompleted / p.jobsBooked) * 100 : null;
+      html += `<tr><td>${esc(x.name)}</td><td>${codeChip(x.code)}</td><td class="num">${fmtNum(p.jobsBooked)}</td><td class="num">${fmtNum(p.jobsCompleted)}</td>
+        <td class="num"><b>${fmtNum(p.metersInstalled)}</b></td><td class="num">${tgt ? fmtNum(tgt, 1) : '–'}</td>
+        <td class="num ${vs === null ? '' : 'cell-' + rag(vs, 100)}">${fmtPct(vs, 0)}</td>
+        <td class="num ${comp === null ? '' : 'cell-' + rag(comp, c.completionTarget)}">${fmtPct(comp, 0)}</td>
+        <td class="num">${fmtNum(p.aborts)}</td><td class="num">${fmtNum(p.noAccess)}</td><td class="num">${fmtNum(p.miles)}</td>
+        <td class="num">${p.metersInstalled ? fmtNum(p.miles / p.metersInstalled, 1) : '–'}</td></tr>`;
+      lastRows.push({ Team: t?.name || '', 'Team leader': t?.leader || '', Engineer: x.name, Code: x.code || '', Booked: p.jobsBooked ?? '', Completed: p.jobsCompleted ?? '', Meters: p.metersInstalled ?? '', Target: tgt || '', Aborts: p.aborts ?? '', 'No access': p.noAccess ?? '', Miles: p.miles ?? '' });
+    }
+    const ta = aggregate(rows.filter(x => x.perf).map(x => x.perf), cfg);
+    html += `<tr class="total-row"><td>Team total</td><td></td><td class="num">${fmtNum(ta.booked)}</td><td class="num">${fmtNum(ta.completed)}</td><td class="num">${fmtNum(ta.meters)}</td><td class="num">${fmtNum(ta.target, 1)}</td>
+      <td class="num">${fmtPct(ta.targetPct, 0)}</td><td class="num">${fmtPct(ta.completionPct, 0)}</td><td class="num">${fmtNum(ta.aborts)}</td><td class="num">${fmtNum(ta.noAccess)}</td><td class="num">${fmtNum(ta.miles)}</td><td class="num">${fmtNum(ta.milesPerMeter, 1)}</td></tr>`;
+  }
+  if (!list.length) html += `<tr><td colspan="12" class="empty">Nothing recorded for this day. <a href="submit-performance.html?date=${day}">Submit performance</a></td></tr>`;
+  $('#tbl').innerHTML = html + '</tbody>';
+}
+$('#export').onclick = () => exportXlsx(`daily-performance-${$('#day').value}`, { 'Daily performance': lastRows });
+load();
+</script>
+</body>
+</html>

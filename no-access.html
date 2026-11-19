@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>No Access Visits</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>No Access Visits</h1><p>Jobs where the engineer could not get in. Record up to three attempts; close the record once the job is completed or cancelled.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const att = n => [{ key: `attempt${n}Date`, label: `Attempt ${n} date`, type: 'date', list: n === 1 }, { key: `attempt${n}Engineer`, label: `Attempt ${n} engineer`, type: 'text', list: false }, { key: `attempt${n}Notes`, label: `Attempt ${n} notes`, type: 'text', list: false }];
+await logbook($('#book'), {
+  collection: C.noAccessVisits, dateField: 'attempt1Date', defaultDays: 90, addLabel: 'Log no access', sheetName: 'No access',
+  fields: [
+    { key: 'jobRef', label: 'Job reference', type: 'text', required: true },
+    { key: 'postcode', label: 'Postcode', type: 'text' },
+    ...engineerFields(),
+    ...att(1), ...att(2), ...att(3),
+    { key: 'attempts', label: 'Attempts', type: 'number', compute: r => [1, 2, 3].filter(n => r[`attempt${n}Date`]).length },
+    { key: 'status', label: 'Status', type: 'select', options: ['Open', 'Completed', 'Cancelled', 'Returned to client'], default: 'Open', filter: true,
+      format: v => `<span class="badge ${v === 'Open' ? 'warn' : 'good'}">${esc(v || 'Open')}</span>` },
+    { key: 'notes', label: 'Notes', type: 'textarea', list: false },
+  ],
+  newDefaults: () => ({ attempt1Date: todayISO() }),
+  beforeSave: d => ({ ...d, postcode: (d.postcode || '').toUpperCase(), status: d.status || 'Open' }),
+  rowClass: r => (r.status || 'Open') === 'Open' && [1, 2, 3].filter(n => r[`attempt${n}Date`]).length >= 3 ? 'row-bad' : '',
+}, ctx);
+</script>
+</body>
+</html>

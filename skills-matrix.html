@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skills Matrix</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>.matrix td.clickable { font-size: 12px; min-width: 96px; } .matrix th { white-space: normal; min-width: 96px; font-size: 10.5px; }</style>
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Skills Matrix</h1><p id="explain"></p></div></div>
+  <div class="toolbar">
+    <label class="field">Team<span id="tWrap"></span></label>
+    <label class="field inline"><input type="checkbox" id="issues"> Only engineers with gaps or expiries</label>
+    <div class="spacer"></div><button class="btn" id="export" type="button">⬇ Export</button>
+  </div>
+  <div class="grid" id="kpis" style="--min:170px;margin-bottom:16px"></div>
+  <div class="table-wrap" style="--max-h:72vh"><table class="table matrix" id="tbl"></table></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, db, doc, setDoc, deleteDoc, $, $$, esc, el, fetchAll, getEngineers, teamSelect, teamOf, todayISO, addDays, fmtDate, slug, stamp, modal, toast, confirmBox, exportXlsx } from './assets/app.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const Q = cfg.lists.qualifications, today = todayISO(), warn = addDays(today, cfg.targets.qualificationWarnDays);
+$('#explain').innerHTML = `Click any cell to record a qualification. <span class="badge good">In date</span> <span class="badge warn">Expires within ${cfg.targets.qualificationWarnDays} days</span> <span class="badge bad">Expired</span> <span class="badge">Not held</span> — the qualification list is set on Targets &amp; KPIs.`;
+$('#tWrap').innerHTML = teamSelect('team');
+let engineers = await getEngineers(), recs = [];
+const state = r => !r ? 'none' : !r.expiryDate ? 'good' : r.expiryDate < today ? 'bad' : r.expiryDate <= warn ? 'warn' : 'good';
+
+async function load() { recs = await fetchAll(C.qualifications); draw(); }
+function draw() {
+  const tid = $('#team').value, map = new Map(recs.map(r => [`${r.engineerId}|${r.qualification}`, r]));
+  let list = engineers.filter(e => !tid || e.teamId === tid);
+  if ($('#issues').checked) list = list.filter(e => Q.some(q => state(map.get(`${e.id}|${q}`)) !== 'good'));
+  const cells = list.flatMap(e => Q.map(q => state(map.get(`${e.id}|${q}`))));
+  const n = s => cells.filter(c => c === s).length;
+  $('#kpis').innerHTML = [['In date', n('good'), 'good'], ['Expiring soon', n('warn'), n('warn') ? 'warn' : ''], ['Expired', n('bad'), n('bad') ? 'bad' : ''], ['Not held', n('none'), '']]
+    .map(([l, v, c]) => `<div class="kpi ${c}"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+  $('#tbl').innerHTML = `<thead><tr><th>Engineer</th>${Q.map(q => `<th>${esc(q)}</th>`).join('')}</tr></thead><tbody>${list.map(e => `<tr><td>${esc(e.name)}<div class="faint" style="font-size:11px">${esc(teamOf(e.teamId)?.name || '')}</div></td>${Q.map(q => {
+    const r = map.get(`${e.id}|${q}`), s = state(r);
+    return `<td class="clickable ${s === 'none' ? 'cell-muted' : 'cell-' + s}" data-e="${esc(e.id)}" data-q="${esc(q)}">${r ? (r.expiryDate ? fmtDate(r.expiryDate, { day: '2-digit', month: 'short', year: '2-digit' }) : 'No expiry') : '—'}</td>`;
+  }).join('')}</tr>`).join('') || `<tr><td colspan="${Q.length + 1}" class="empty">No engineers to show.</td></tr>`}</tbody>`;
+  $$('#tbl td.clickable').forEach(td => td.onclick = () => edit(engineers.find(e => e.id === td.dataset.e), td.dataset.q, map.get(`${td.dataset.e}|${td.dataset.q}`)));
+}
+function edit(e, q, r = {}) {
+  const body = el(`<form class="form-grid" onsubmit="return false"><div class="full muted">${esc(e.name)} · <b style="color:var(--text)">${esc(q)}</b></div>
+    <label class="field">Achieved<input type="date" id="a" value="${esc(r.achievedDate || '')}"></label>
+    <label class="field">Expires<input type="date" id="x" value="${esc(r.expiryDate || '')}"><span class="help">Leave blank if it never expires.</span></label>
+    <label class="field full">Certificate reference<input id="c" value="${esc(r.certificateRef || '')}"></label>
+    <label class="field full">Assessment booked for<input type="date" id="b" value="${esc(r.assessmentDate || '')}"></label></form>`);
+  const ref = doc(db, C.qualifications, `${e.id}_${slug(q)}`);
+  modal({ title: r.qualification ? 'Update qualification' : 'Add qualification', body, actions: [
+    ...(r.qualification ? [{ label: 'Remove', kind: 'danger', onClick: async () => { if (!(await confirmBox('Remove this qualification?', { danger: true, okLabel: 'Remove' }))) return false; await deleteDoc(ref); load(); } }] : []),
+    { label: 'Cancel', kind: 'ghost' },
+    { label: 'Save', kind: 'primary', onClick: async () => {
+      await setDoc(ref, stamp({ engineerId: e.id, engineerName: e.name, teamId: e.teamId || '', qualification: q, achievedDate: $('#a', body).value, expiryDate: $('#x', body).value, certificateRef: $('#c', body).value.trim(), assessmentDate: $('#b', body).value }));
+      toast('Saved', 'good'); load();
+    } }] });
+}
+$('#team').onchange = draw; $('#issues').onchange = draw;
+$('#export').onclick = () => { const map = new Map(recs.map(r => [`${r.engineerId}|${r.qualification}`, r])); exportXlsx(`skills-matrix-${today}`, { 'Skills matrix': engineers.map(e => Object.fromEntries([['Engineer', e.name], ['Team', teamOf(e.teamId)?.name || ''], ...Q.map(q => { const r = map.get(`${e.id}|${q}`); return [q, r ? (r.expiryDate || 'No expiry') : '']; })])) }); };
+load();
+</script>
+</body>
+</html>

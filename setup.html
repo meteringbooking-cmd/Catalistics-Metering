@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>First-time setup · Catalistics</title>
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  body { display: grid; place-items: center; min-height: 100vh; padding: 20px; }
+  .wrap { width: min(560px, 100%); }
+  .wrap .logo { display: block; width: 240px; margin: 0 auto 22px; }
+  ol { padding-left: 20px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <img class="logo" src="assets/logo.png" alt="Catalistics">
+  <div class="card">
+    <h2>First-time setup</h2>
+    <p class="muted">Run this once for a new installation. It creates the first administrator account and saves the default settings. After that, this page will refuse to run again.</p>
+    <form id="form" class="form-grid">
+      <label class="field full">Client company name<input id="client" required placeholder="e.g. Client Name Ltd"></label>
+      <label class="field full">Your name<input id="name" required placeholder="Administrator"></label>
+      <label class="field full">Your email<input id="email" type="email" required></label>
+      <label class="field full">Choose a password<input id="password" type="password" minlength="8" required><span class="help">At least 8 characters.</span></label>
+      <div class="full row"><button class="btn primary" id="go" type="submit">Create administrator</button><a class="btn ghost" href="login.html">Back to sign in</a></div>
+      <div class="full" id="msg"></div>
+    </form>
+  </div>
+</div>
+<script type="module">
+import { auth, db, C, DEFAULT_CONFIG, doc, writeBatch, serverTimestamp } from './assets/app.js';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+const $ = id => document.getElementById(id);
+
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  $('go').disabled = true; $('msg').innerHTML = '<span class="muted">Working…</span>';
+  const email = $('email').value.trim(), password = $('password').value;
+  try {
+    let cred;
+    try { cred = await createUserWithEmailAndPassword(auth, email, password); }
+    catch (err) { if (err.code === 'auth/email-already-in-use') cred = await signInWithEmailAndPassword(auth, email, password); else throw err; }
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.company.clientName = $('client').value.trim();
+    const b = writeBatch(db);
+    b.set(doc(db, C.users, cred.user.uid), { name: $('name').value.trim(), email, role: 'admin', active: true, createdAt: serverTimestamp() });
+    b.set(doc(db, C.settings, 'config'), { ...cfg, updatedAt: serverTimestamp(), updatedBy: email });
+    await b.commit();
+    $('msg').innerHTML = '<p class="t-good"><b>Done.</b> Taking you to Targets &amp; KPIs to finish setting up…</p>';
+    setTimeout(() => location.href = 'data-input.html', 1200);
+  } catch (err) {
+    console.error(err);
+    $('msg').innerHTML = err.code === 'permission-denied'
+      ? '<p class="t-warn">This installation has already been set up. <a href="login.html">Sign in</a> instead, or ask an administrator for access.</p>'
+      : `<p class="t-bad">${err.message}</p>`;
+    $('go').disabled = false;
+  }
+};
+</script>
+</body>
+</html>

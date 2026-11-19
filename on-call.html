@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>On-Call Rota</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>On-Call Rota</h1><p>Who is on call, when, and how to reach them. The current rota is highlighted.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const today = todayISO();
+await logbook($('#book'), {
+  collection: C.onCallRota, dateField: 'startDate', defaultDays: 30, futureDays: 120, addLabel: 'Add rota entry', sortAsc: true, sheetName: 'On call',
+  fields: [
+    { key: 'startDate', label: 'From', type: 'date', required: true, default: () => today },
+    { key: 'endDate', label: 'To', type: 'date', required: true, default: () => addDays(today, 6) },
+    { key: 'person', label: 'Person on call', type: 'text', required: true },
+    { key: 'role', label: 'Role', type: 'text', help: 'e.g. Team Leader, Manager' },
+    { key: 'phone', label: 'Phone', type: 'text' },
+    { key: 'contractId', label: 'Contract', type: 'contract' },
+    { key: 'notes', label: 'Notes', type: 'textarea', list: false },
+  ],
+  rowClass: r => r.startDate <= today && r.endDate >= today ? 'row-good' : '',
+  summary: (rows, el) => {
+    const now = rows.filter(r => r.startDate <= today && r.endDate >= today);
+    el.innerHTML = `<div class="card" style="margin-bottom:14px"><h3>On call now</h3>${now.length ? now.map(r => `<div style="font-size:18px;margin-top:6px"><b>${esc(r.person)}</b> ${r.role ? `<span class="muted">(${esc(r.role)})</span>` : ''} · <span class="mono">${esc(r.phone || '')}</span> <span class="faint">until ${fmtDate(r.endDate)}</span></div>`).join('') : '<div class="muted">Nobody is on the rota for today.</div>'}</div>`;
+  },
+}, ctx);
+</script>
+</body>
+</html>

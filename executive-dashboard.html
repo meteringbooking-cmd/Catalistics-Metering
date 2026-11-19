@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Executive Dashboard</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Executive Dashboard</h1><p id="sub"></p></div>
+    <label class="field">Month<input type="month" id="month"></label></div>
+  <h3>Delivery</h3><div class="grid" id="delivery" style="--min:190px;margin-bottom:20px"></div>
+  <h3>Money</h3><div class="grid" id="money" style="--min:190px;margin-bottom:20px"></div>
+  <h3>People &amp; quality</h3><div class="grid" id="people" style="--min:190px;margin-bottom:20px"></div>
+  <div class="stack">
+    <div class="card"><div class="card-head"><h3>Meters per week · last 12 weeks</h3></div><div class="chart-box" style="--h:280px"><canvas id="weekly"></canvas></div></div>
+    <div class="card"><div class="card-head"><h3>Contracts this month</h3></div><div class="table-wrap"><table class="table" id="contracts"></table></div></div>
+  </div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, where, fetchRange, fetchAll, getEngineers, aggregate, attendanceSummary, rag, fmtNum, fmtPct, fmtMoney, fmtDate, todayISO, addDays, weekStart,
+  monthStart, monthEnd, workingDaysBetween, activeContracts, drawChart, num, daysBetween } from './assets/app.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+$('#month').value = todayISO().slice(0, 7);
+$('#month').onchange = load;
+const kpi = (l, v, s, c = '', href = '') => `<${href ? `a href="${href}" style="color:inherit;text-decoration:none"` : 'div'} class="kpi ${c}"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${s}</div></${href ? 'a' : 'div'}>`;
+
+async function load() {
+  const m0 = $('#month').value + '-01', m1 = monthEnd(m0);
+  const asOf = todayISO() < m1 ? (todayISO() < m0 ? m0 : todayISO()) : m1;
+  $('#sub').textContent = `${cfg.company.clientName} · month to ${fmtDate(asOf, { day: 'numeric', month: 'long', year: 'numeric' })}`;
+  const w0 = addDays(weekStart(asOf), -77);
+  const [perf, att, audits, complaints, claims, quals, engineers, finance] = await Promise.all([
+    fetchRange(C.dailyPerformance, [w0, m0].sort()[0], m1), fetchRange(C.attendance, m0, m1), fetchRange(C.complianceAudits, m0, m1),
+    fetchAll(C.complaints, where('status', '!=', 'Closed')).catch(() => []), fetchAll(C.additionalPayments, where('status', '==', 'Pending')).catch(() => []),
+    fetchAll(C.qualifications), getEngineers(), fetchAll(C.financeEntries, where('month', '==', $('#month').value)).catch(() => []),
+  ]);
+  const month = perf.filter(r => r.date >= m0 && r.date <= m1);
+  const a = aggregate(month, cfg);
+  const done = workingDaysBetween(m0, asOf).length, all = workingDaysBetween(m0, m1).length;
+  const factor = done ? all / done : 0;
+  const outgoings = finance.reduce((t, f) => t + num(f.amount), 0);
+  const margin = a.revenue - a.cost - outgoings;
+  const s = attendanceSummary(att, cfg);
+  const pass = audits.length ? audits.filter(x => x.result === 'Pass').length / audits.length * 100 : null;
+  const overdue = complaints.filter(c => c.targetDate && c.targetDate < todayISO()).length;
+  const warnTo = addDays(todayISO(), cfg.targets.qualificationWarnDays);
+  const activeIds = new Set(engineers.map(e => e.id));
+  const expiring = quals.filter(q => activeIds.has(q.engineerId) && q.expiryDate && q.expiryDate <= warnTo);
+  const expired = expiring.filter(q => q.expiryDate < todayISO()).length;
+  const claimValue = claims.reduce((t, c) => t + num(c.amount), 0);
+
+  $('#delivery').innerHTML = [
+    kpi('Meters month to date', fmtNum(a.meters), `Target ${fmtNum(a.target, 0)} · ${fmtPct(a.targetPct, 0)}`, rag(a.targetPct, 100), 'performance-report.html'),
+    kpi('Month-end forecast', fmtNum(a.meters * factor), `Target at this headcount ${fmtNum(a.target * factor, 0)}`, rag(a.meters, a.target)),
+    kpi('Completion', fmtPct(a.completionPct), `${fmtNum(a.completed)} of ${fmtNum(a.booked)} jobs`, ''),
+    kpi('Abort rate', fmtPct(a.abortPct), `${fmtNum(a.aborts)} aborts`, ''),
+    kpi('Working days', `${done} / ${all}`, `${all - done} left this month`, ''),
+  ].join('');
+  $('#money').innerHTML = [
+    kpi('Revenue month to date', fmtMoney(a.revenue), `Forecast ${fmtMoney(a.revenue * factor)}`, '', 'finance.html'),
+    kpi('Engineer cost', fmtMoney(a.cost), `${fmtNum(a.days)} engineer days`, ''),
+    kpi('Other costs entered', fmtMoney(outgoings), `${finance.length} entries on Finance`, ''),
+    kpi('Margin month to date', fmtMoney(margin), a.revenue ? `${fmtPct(margin / a.revenue * 100)} of revenue` : '', margin >= 0 ? 'good' : 'bad', 'finance.html'),
+    kpi('Claims awaiting approval', fmtMoney(claimValue), `${claims.length} claim(s)`, claims.length ? 'warn' : '', 'additional-payments.html'),
+  ].join('');
+  $('#people').innerHTML = [
+    kpi('Active engineers', fmtNum(engineers.length), `${cfg.teams.length} teams`, '', 'engineers.html'),
+    kpi('Attendance', fmtPct(s.attendancePct), `${s.sickness} sick days this month`, rag(s.attendancePct, cfg.targets.attendanceTarget), 'attendance.html'),
+    kpi('Audit pass rate', fmtPct(pass), `${audits.length} audits · target ${cfg.targets.complianceTarget}%`, rag(pass, cfg.targets.complianceTarget), 'compliance-audits.html'),
+    kpi('Open complaints', fmtNum(complaints.length), overdue ? `${overdue} past target date` : 'None overdue', overdue ? 'bad' : complaints.length ? 'warn' : 'good', 'complaints.html'),
+    kpi('Qualifications due', fmtNum(expiring.length), `${expired} already expired · next ${cfg.targets.qualificationWarnDays} days`, expired ? 'bad' : expiring.length ? 'warn' : 'good', 'skills-matrix.html'),
+  ].join('');
+
+  const weeks = []; for (let w = w0; w <= weekStart(asOf); w = addDays(w, 7)) weeks.push(w);
+  drawChart($('#weekly'), { type: 'bar', data: { labels: weeks.map(w => fmtDate(w, { day: '2-digit', month: 'short' })),
+    datasets: activeContracts(cfg).map(c => ({ label: c.name, data: weeks.map(w => aggregate(perf.filter(r => r.contractId === c.id && r.date >= w && r.date <= addDays(w, 6)), cfg).meters), backgroundColor: c.colour + 'cc', borderRadius: 3 })) },
+    options: { scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } } });
+
+  $('#contracts').innerHTML = `<thead><tr><th>Contract</th><th class="num">Meters</th><th class="num">vs target</th><th class="num">Completion</th><th class="num">Revenue</th><th class="num">Forecast</th></tr></thead><tbody>${activeContracts(cfg).map(c => {
+    const x = aggregate(month.filter(r => r.contractId === c.id), cfg);
+    return `<tr><td><span class="dot" style="background:${c.colour}"></span> ${esc(c.name)}</td><td class="num">${fmtNum(x.meters)}</td><td class="num cell-${rag(x.targetPct, 100)}">${fmtPct(x.targetPct, 0)}</td>
+      <td class="num cell-${rag(x.completionPct, c.completionTarget)}">${fmtPct(x.completionPct, 0)}</td><td class="num">${fmtMoney(x.revenue)}</td><td class="num">${fmtMoney(x.revenue * factor)}</td></tr>`;
+  }).join('')}</tbody>`;
+}
+load();
+</script>
+</body>
+</html>

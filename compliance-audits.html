@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compliance Audits</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Compliance Audits</h1><p>Audit results for each engineer. An audit passes when its score reaches the pass mark set on Targets &amp; KPIs. Pass rates feed the league table and the bonus quality multiplier.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const pm = cfg.compliance.passMark, T = cfg.targets.complianceTarget;
+await logbook($('#book'), {
+  collection: C.complianceAudits, dateField: 'date', defaultDays: 90, addLabel: 'Add audit', sheetName: 'Audits',
+  fields: [
+    { key: 'date', label: 'Audit date', type: 'date', required: true, default: () => todayISO() },
+    ...engineerFields(),
+    { key: 'category', label: 'Category', type: 'select', options: c => c.lists.auditCategories, required: true, filter: true },
+    { key: 'auditor', label: 'Auditor', type: 'text', default: () => ctx.profile.name || '' },
+    { key: 'jobRef', label: 'Job reference', type: 'text' },
+    { key: 'score', label: 'Score %', type: 'number', required: true, help: `Pass mark is ${pm}%.` },
+    { key: 'result', label: 'Result', type: 'text', form: false, format: v => `<span class="badge ${v === 'Pass' ? 'good' : 'bad'}">${esc(v)}</span>` },
+    { key: 'actions', label: 'Actions required', type: 'textarea', list: false },
+    { key: 'actionStatus', label: 'Actions', type: 'select', options: ['None', 'Open', 'Closed'], default: 'None', filter: true,
+      format: v => v === 'Open' ? '<span class="badge warn">Open</span>' : v === 'Closed' ? '<span class="badge good">Closed</span>' : '<span class="faint">–</span>' },
+  ],
+  beforeSave: d => ({ ...d, result: num(d.score) >= pm ? 'Pass' : 'Fail' }),
+  rowClass: r => r.result === 'Fail' ? 'row-bad' : '',
+  summary: (rows, el) => {
+    const rate = rs => rs.length ? rs.filter(r => r.result === 'Pass').length / rs.length * 100 : null;
+    const tile = (l, rs, sub = '') => `<div class="kpi ${rag(rate(rs), T)}"><div class="label">${esc(l)}</div><div class="value">${fmtPct(rate(rs), 0)}</div><div class="sub">${rs.length} audits ${sub}</div></div>`;
+    const teams = [...groupBy(rows, r => r.teamId || '')];
+    const cats = [...groupBy(rows, r => r.category || '')];
+    const openActs = rows.filter(r => r.actionStatus === 'Open').length;
+    el.innerHTML = `<div class="grid" style="--min:170px;margin-bottom:10px">${tile('Overall pass rate', rows, `· target ${T}%`)}<div class="kpi ${openActs ? 'warn' : 'good'}"><div class="label">Open actions</div><div class="value">${openActs}</div></div>
+      ${teams.map(([t, rs]) => tile(teamOf(t)?.name || 'No team', rs)).join('')}</div>
+      <div class="grid" style="--min:170px;margin-bottom:14px">${cats.map(([c, rs]) => tile(c || 'No category', rs)).join('')}</div>`;
+  },
+}, ctx);
+</script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Scheduling</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  .board { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }
+  .eng-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
+  .eng-card h4 { margin: 0; font-family: var(--display); font-size: 15px; }
+  .load { height: 6px; border-radius: 3px; background: var(--line); margin: 8px 0 10px; overflow: hidden; }
+  .load span { display: block; height: 100%; background: var(--accent); }
+  .load.over span { background: var(--bad); }
+  .job { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--line); margin-top: 6px; cursor: pointer; }
+  .job:hover { border-color: var(--accent); }
+  .job .slot { font-family: var(--mono); font-size: 11.5px; color: var(--muted); width: 54px; flex-shrink: 0; padding-top: 2px; }
+  .job .what { flex: 1; min-width: 0; font-size: 13px; }
+  .job .what small { display: block; color: var(--faint); }
+  .unassigned { border-style: dashed; }
+</style>
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Job Scheduling</h1><p>Each engineer's booked jobs for the day. Click a job to set its outcome. When the day is done, <b>Send to performance</b> turns the outcomes into that day's figures — miles and notes already entered are kept.</p></div></div>
+  <div class="toolbar">
+    <label class="field">Date<input type="date" id="day"></label>
+    <label class="field">Team<span id="tWrap"></span></label>
+    <label class="field">Search<input type="search" id="q" placeholder="Job ref, postcode…"></label>
+    <div class="spacer"></div>
+    <button class="btn" id="template" type="button">⬇ Upload template</button>
+    <label class="btn" style="cursor:pointer">⬆ Upload jobs<input type="file" id="file" accept=".xlsx,.xls,.csv" hidden></label>
+    <button class="btn" id="add" type="button">+ Add job</button>
+    <button class="btn primary" id="push" type="button">Send to performance</button>
+  </div>
+  <div class="grid" id="kpis" style="--min:150px;margin-bottom:16px"></div>
+  <div class="board" id="board"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, db, doc, collection, addDoc, setDoc, deleteDoc, serverTimestamp, $, $$, esc, el, options, fetchRange, getEngineers, engineerOptions,
+  todayISO, stamp, commitInBatches, toast, modal, confirmBox, teamSelect, teamOf, readSpreadsheet, pick, normaliseDate, matchEngineer, num, exportXlsx, fmtNum, fmtDateLong, state } from './assets/app.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const L = cfg.lists;
+$('#tWrap').innerHTML = teamSelect('team');
+$('#day').value = new URLSearchParams(location.search).get('date') || todayISO();
+let engineers = await getEngineers(), jobs = [];
+const typeOf = n => L.jobTypes.find(t => t.name === n) || { minutes: 60, meters: 1 };
+const statusClass = s => ({ Completed: 'good', Aborted: 'bad', 'No access': 'warn', Cancelled: '', Rescheduled: '', Booked: 'info' }[s] ?? 'info');
+
+async function load() { jobs = await fetchRange(C.scheduledJobs, $('#day').value, $('#day').value); draw(); }
+function draw() {
+  const tid = $('#team').value, q = $('#q').value.trim().toLowerCase();
+  const vis = jobs.filter(j => (!tid || j.teamId === tid) && (!q || `${j.jobRef} ${j.postcode} ${j.address} ${j.jobType}`.toLowerCase().includes(q)));
+  const count = s => vis.filter(j => j.status === s).length;
+  const live = vis.filter(j => !['Cancelled', 'Rescheduled'].includes(j.status));
+  $('#kpis').innerHTML = [['Jobs', live.length, ''], ['Completed', count('Completed'), 'good'], ['Aborted', count('Aborted'), count('Aborted') ? 'bad' : ''],
+    ['No access', count('No access'), count('No access') ? 'warn' : ''], ['Still booked', count('Booked') + vis.filter(j => !j.status).length, ''], ['Meters fitted', vis.filter(j => j.status === 'Completed').reduce((t, j) => t + num(j.metersFitted ?? typeOf(j.jobType).meters), 0), '']]
+    .map(([l, v, c]) => `<div class="kpi ${c}"><div class="label">${l}</div><div class="value">${fmtNum(v)}</div></div>`).join('');
+  const engs = engineers.filter(e => !tid || e.teamId === tid);
+  const capMin = num(L.dayCapacityHours || 8) * 60;
+  const cards = engs.map(e => ({ e, js: vis.filter(j => j.engineerId === e.id) }))
+    .sort((a, b) => b.js.length - a.js.length || String(a.e.name).localeCompare(String(b.e.name), 'en', { numeric: true }));
+  const orphan = vis.filter(j => !engs.some(e => e.id === j.engineerId));
+  $('#board').innerHTML = [...cards.map(({ e, js }) => {
+    const mins = js.filter(j => !['Cancelled', 'Rescheduled'].includes(j.status)).reduce((t, j) => t + num(typeOf(j.jobType).minutes), 0);
+    return `<div class="eng-card"><div class="row"><h4>${esc(e.name)}</h4><span class="spacer"></span><span class="muted" style="font-size:12px">${esc(teamOf(e.teamId)?.name || '')}</span></div>
+      <div class="row" style="font-size:12px;color:var(--muted)">${js.length} job(s) · ${(mins / 60).toFixed(1)}h of ${(capMin / 60).toFixed(1)}h</div>
+      <div class="load ${mins > capMin ? 'over' : ''}"><span style="width:${Math.min(100, capMin ? mins / capMin * 100 : 0)}%"></span></div>
+      ${js.sort((a, b) => String(a.slot).localeCompare(String(b.slot))).map(jobHtml).join('') || '<div class="faint" style="font-size:12.5px">No jobs</div>'}</div>`;
+  }), orphan.length ? `<div class="eng-card unassigned"><h4>Unassigned / other</h4>${orphan.map(jobHtml).join('')}</div>` : ''].join('');
+  $$('.job').forEach(n => n.onclick = () => editJob(jobs.find(j => j.id === n.dataset.id)));
+}
+const jobHtml = j => `<div class="job" data-id="${esc(j.id)}"><span class="slot">${esc(j.slot || '–')}</span><span class="what"><b>${esc(j.jobRef || 'No ref')}</b> · ${esc(j.jobType || '')}<small>${esc([j.postcode, j.address].filter(Boolean).join(' · '))}</small>${j.abortReason ? `<small class="t-bad">${esc(j.abortReason)}</small>` : ''}</span><span class="badge ${statusClass(j.status || 'Booked')}">${esc(j.status || 'Booked')}</span></div>`;
+
+function jobForm(j = {}) {
+  return el(`<form class="form-grid" onsubmit="return false">
+    <label class="field">Job reference<input id="jRef" value="${esc(j.jobRef)}"></label>
+    <label class="field">Date<input id="jDate" type="date" value="${esc(j.date || $('#day').value)}"></label>
+    <label class="field">Engineer<select id="jEng">${engineerOptions(engineers, j.engineerId)}</select></label>
+    <label class="field">Job type<select id="jType">${options(L.jobTypes.map(t => t.name), j.jobType)}</select></label>
+    <label class="field">Time slot<input id="jSlot" value="${esc(j.slot)}" placeholder="08:00 or AM"></label>
+    <label class="field">Postcode<input id="jPc" value="${esc(j.postcode)}"></label>
+    <label class="field full">Address / customer ref<input id="jAddr" value="${esc(j.address)}"></label>
+    <label class="field">Outcome<select id="jStatus">${options(L.jobOutcomes, j.status || 'Booked')}</select></label>
+    <label class="field">Abort reason<select id="jAbort">${options(L.abortReasons, j.abortReason, { blank: '—' })}</select></label>
+    <label class="field">Meters fitted<input id="jMeters" type="number" min="0" value="${esc(j.metersFitted ?? '')}" placeholder="from job type"></label>
+    <label class="field full">Notes<textarea id="jNotes">${esc(j.notes)}</textarea></label></form>`);
+}
+function readJob(f) {
+  const e = engineers.find(x => x.id === $('#jEng', f).value);
+  const m = $('#jMeters', f).value;
+  return { jobRef: $('#jRef', f).value.trim(), date: $('#jDate', f).value, engineerId: e?.id || '', engineerName: e?.name || '', teamId: e?.teamId || '', contractId: e?.contractId || '',
+    jobType: $('#jType', f).value, slot: $('#jSlot', f).value.trim(), postcode: $('#jPc', f).value.trim().toUpperCase(), address: $('#jAddr', f).value.trim(),
+    status: $('#jStatus', f).value, abortReason: $('#jStatus', f).value === 'Aborted' ? $('#jAbort', f).value : '', metersFitted: m === '' ? null : num(m), notes: $('#jNotes', f).value.trim() };
+}
+function editJob(j) {
+  const f = jobForm(j);
+  modal({ title: `Job ${j.jobRef || ''}`, body: f, wide: true, actions: [
+    { label: 'Delete', kind: 'danger', onClick: async () => { if (!(await confirmBox('Delete this job?', { danger: true, okLabel: 'Delete' }))) return false; await deleteDoc(doc(db, C.scheduledJobs, j.id)); load(); } },
+    { label: 'Cancel', kind: 'ghost' },
+    { label: 'Save', kind: 'primary', onClick: async () => { await setDoc(doc(db, C.scheduledJobs, j.id), stamp(readJob(f)), { merge: true }); toast('Saved', 'good'); load(); } }] });
+}
+$('#add').onclick = () => {
+  const f = jobForm();
+  modal({ title: 'Add job', body: f, wide: true, actions: [{ label: 'Cancel', kind: 'ghost' }, { label: 'Add', kind: 'primary', onClick: async () => {
+    const d = readJob(f); if (!d.engineerId) { toast('Choose an engineer', 'warn'); return false; }
+    await addDoc(collection(db, C.scheduledJobs), { ...stamp(d), createdAt: serverTimestamp() }); load();
+  } }] });
+};
+
+$('#push').onclick = async () => {
+  const day = $('#day').value;
+  if (!jobs.length) { toast('No jobs on this day', 'warn'); return; }
+  const open = jobs.filter(j => !j.status || j.status === 'Booked').length;
+  if (!(await confirmBox(`Write ${fmtDateLong(day)}'s outcomes into Daily Performance?${open ? ` ${open} job(s) are still marked Booked and will count as booked but not completed.` : ''}`, { okLabel: 'Send' }))) return;
+  const existing = new Map((await fetchRange(C.dailyPerformance, day, day)).map(r => [r.engineerId, r]));
+  const byEng = new Map();
+  for (const j of jobs) { if (!j.engineerId) continue; if (!byEng.has(j.engineerId)) byEng.set(j.engineerId, []); byEng.get(j.engineerId).push(j); }
+  const ops = [];
+  for (const [eid, js] of byEng) {
+    const e = engineers.find(x => x.id === eid) || { id: eid, name: js[0].engineerName, teamId: js[0].teamId, contractId: js[0].contractId };
+    const live = js.filter(j => !['Cancelled', 'Rescheduled'].includes(j.status));
+    const done = js.filter(j => j.status === 'Completed');
+    const prev = existing.get(eid) || {};
+    ops.push({ type: 'set', ref: doc(db, C.dailyPerformance, `${day}_${eid}`), data: stamp({
+      date: day, engineerId: eid, engineerName: e.name, teamId: e.teamId || '', contractId: e.contractId || '',
+      jobsBooked: live.length, jobsCompleted: done.length, aborts: js.filter(j => j.status === 'Aborted').length, noAccess: js.filter(j => j.status === 'No access').length,
+      metersInstalled: done.reduce((t, j) => t + num(j.metersFitted ?? typeOf(j.jobType).meters), 0), miles: prev.miles || 0, notes: prev.notes || '', source: 'scheduling' }) });
+  }
+  await commitInBatches(ops); toast(`Sent ${ops.length} engineer(s) to performance`, 'good');
+};
+
+$('#template').onclick = () => exportXlsx('jobs-upload-template', { Jobs: [{ 'Job ref': 'JOB-0001', Date: $('#day').value, Engineer: engineers[0]?.name || 'Engineer 01', 'Job type': L.jobTypes[0]?.name || '', Slot: '08:00', Postcode: 'AB1 2CD', Address: '', Notes: '' }] });
+$('#file').onchange = async ev => {
+  const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
+  const raw = await readSpreadsheet(f); const ready = []; let skipped = 0;
+  for (const r of raw) {
+    const e = matchEngineer(engineers, pick(r, 'Employee number', 'Engineer', 'Engineer name', 'Resource'));
+    const date = normaliseDate(pick(r, 'Date', 'Appointment date')) || $('#day').value;
+    if (!e) { skipped++; continue; }
+    ready.push({ jobRef: String(pick(r, 'Job ref', 'Job reference', 'Reference', 'Job id')), date, engineerId: e.id, engineerName: e.name, teamId: e.teamId || '', contractId: e.contractId || '',
+      jobType: String(pick(r, 'Job type', 'Type') || ''), slot: String(pick(r, 'Slot', 'Time slot', 'Time') || ''), postcode: String(pick(r, 'Postcode', 'Post code') || '').toUpperCase(),
+      address: String(pick(r, 'Address', 'Customer ref') || ''), notes: String(pick(r, 'Notes') || ''), status: 'Booked', abortReason: '', metersFitted: null });
+  }
+  const dates = [...new Set(ready.map(r => r.date))].sort();
+  const body = el(`<div><p><b>${ready.length}</b> job(s) across ${dates.length} date(s).${skipped ? ` <span class="t-warn">${skipped} skipped — engineer not found.</span>` : ''}</p>
+    <label class="field inline"><input type="checkbox" id="replace"> Replace all existing jobs on ${dates.length === 1 ? fmtDateLong(dates[0]) : 'these dates'}</label></div>`);
+  modal({ title: 'Upload jobs', body, actions: [{ label: 'Cancel', kind: 'ghost' }, { label: 'Upload', kind: 'primary', onClick: async () => {
+    const ops = [];
+    if ($('#replace', body).checked) for (const d of dates) for (const j of await fetchRange(C.scheduledJobs, d, d)) ops.push({ type: 'delete', ref: doc(db, C.scheduledJobs, j.id) });
+    for (const r of ready) ops.push({ type: 'set', ref: doc(collection(db, C.scheduledJobs)), data: { ...stamp(r), createdAt: serverTimestamp() } });
+    await commitInBatches(ops); toast(`Uploaded ${ready.length} job(s)`, 'good'); load();
+  } }] });
+};
+$('#day').onchange = load; $('#team').onchange = draw; $('#q').oninput = draw;
+load();
+</script>
+</body>
+</html>

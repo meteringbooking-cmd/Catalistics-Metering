@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speeding</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Speeding</h1><p>Speeding incidents from vehicle tracking. Anything over the limit by more than the tolerance set on Targets &amp; KPIs counts as serious.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const tol = cfg.fleet.speedingToleranceMph;
+await logbook($('#book'), {
+  collection: C.speedingIncidents, dateField: 'date', defaultDays: 90, addLabel: 'Add incident', sheetName: 'Speeding',
+  fields: [
+    { key: 'date', label: 'Date', type: 'date', required: true, default: () => todayISO() },
+    { key: 'time', label: 'Time', type: 'time' },
+    ...engineerFields(),
+    { key: 'location', label: 'Location', type: 'text' },
+    { key: 'speed', label: 'Speed (mph)', type: 'number', required: true },
+    { key: 'limit', label: 'Limit (mph)', type: 'number', required: true },
+    { key: 'over', label: 'Over by', type: 'number', compute: r => num(r.speed) - num(r.limit), format: v => `<span class="${v > tol ? 't-bad' : 't-warn'}"><b>+${v}</b></span>` },
+    { key: 'actionTaken', label: 'Action taken', type: 'select', options: ['None yet', 'Spoken to', 'Written warning', 'Disciplinary'], default: 'None yet', filter: true },
+    { key: 'notes', label: 'Notes', type: 'textarea', list: false },
+  ],
+  rowClass: r => num(r.speed) - num(r.limit) > tol ? 'row-bad' : 'row-warn',
+  summary: (rows, el) => {
+    const serious = rows.filter(r => num(r.speed) - num(r.limit) > tol).length;
+    const teams = [...groupBy(rows, r => r.teamId || '')];
+    const top = [...groupBy(rows, r => r.engineerName || '')].sort((a, b) => b[1].length - a[1].length).slice(0, 5);
+    el.innerHTML = `<div class="grid" style="--min:180px;margin-bottom:10px"><div class="kpi"><div class="label">Incidents</div><div class="value">${rows.length}</div></div><div class="kpi ${serious ? 'bad' : 'good'}"><div class="label">Serious (over +${tol})</div><div class="value">${serious}</div></div>
+      ${teams.map(([t, rs]) => `<div class="kpi"><div class="label">${esc(teamOf(t)?.name || 'No team')}</div><div class="value">${rs.length}</div></div>`).join('')}</div>
+      ${top.length ? `<div class="card" style="margin-bottom:14px"><h3>Most incidents</h3><div class="row">${top.map(([n, rs]) => `<span class="badge">${esc(n)} · ${rs.length}</span>`).join('')}</div></div>` : ''}`;
+  },
+}, ctx);
+</script>
+</body>
+</html>

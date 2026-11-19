@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Complaints</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Complaints</h1><p>Customer complaints with a target response date (set on Targets &amp; KPIs). Overdue complaints are highlighted and shown on the Work Screen.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const today = todayISO(), days = cfg.targets.complaintResponseDays;
+await logbook($('#book'), {
+  collection: C.complaints, dateField: 'dateReceived', defaultDays: 180, addLabel: 'Log complaint', sheetName: 'Complaints',
+  fields: [
+    { key: 'reference', label: 'Reference', type: 'text', required: true },
+    { key: 'dateReceived', label: 'Received', type: 'date', required: true, default: () => today },
+    { key: 'targetDate', label: 'Target date', type: 'date', help: `Defaults to ${days} days after it was received.` },
+    { key: 'customerRef', label: 'Customer / job ref', type: 'text' },
+    ...engineerFields({ required: false }),
+    { key: 'category', label: 'Category', type: 'select', options: c => c.lists.complaintCategories, filter: true },
+    { key: 'description', label: 'What happened', type: 'textarea', list: false },
+    { key: 'status', label: 'Status', type: 'select', options: ['Open', 'Investigating', 'Awaiting customer', 'Closed'], default: 'Open', filter: true,
+      format: (v, r) => `<span class="badge ${v === 'Closed' ? 'good' : r.targetDate && r.targetDate < today ? 'bad' : 'warn'}">${esc(v || 'Open')}</span>` },
+    { key: 'resolution', label: 'Resolution', type: 'textarea', list: false },
+    { key: 'closedDate', label: 'Closed on', type: 'date', list: false },
+    { key: 'age', label: 'Days open', type: 'number', compute: r => daysBetween(r.dateReceived, r.closedDate || today) },
+  ],
+  beforeSave: d => {
+    if (!d.targetDate && d.dateReceived) d.targetDate = addDays(d.dateReceived, days);
+    if (d.status === 'Closed' && !d.closedDate) d.closedDate = today;
+    if (!d.status) d.status = 'Open';
+    return d;
+  },
+  rowClass: r => r.status !== 'Closed' && r.targetDate && r.targetDate < today ? 'row-bad' : r.status !== 'Closed' ? 'row-warn' : '',
+  summary: (rows, el) => {
+    const open = rows.filter(r => r.status !== 'Closed'), overdue = open.filter(r => r.targetDate && r.targetDate < today);
+    const closed = rows.filter(r => r.status === 'Closed' && r.closedDate);
+    const onTime = closed.filter(r => !r.targetDate || r.closedDate <= r.targetDate).length;
+    el.innerHTML = `<div class="grid" style="--min:180px;margin-bottom:14px"><div class="kpi ${open.length ? 'warn' : 'good'}"><div class="label">Open</div><div class="value">${open.length}</div></div>
+      <div class="kpi ${overdue.length ? 'bad' : 'good'}"><div class="label">Overdue</div><div class="value">${overdue.length}</div></div>
+      <div class="kpi"><div class="label">Closed on time</div><div class="value">${fmtPct(closed.length ? onTime / closed.length * 100 : null, 0)}</div><div class="sub">${closed.length} closed</div></div></div>`;
+  },
+}, ctx);
+</script>
+</body>
+</html>

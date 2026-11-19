@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Refusals</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Job Refusals</h1><p>Jobs an engineer declined to carry out, and why.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+await logbook($('#book'), {
+  collection: C.jobRefusals, dateField: 'date', defaultDays: 90, addLabel: 'Log refusal', sheetName: 'Refusals',
+  fields: [
+    { key: 'date', label: 'Date', type: 'date', required: true, default: () => todayISO() },
+    ...engineerFields(),
+    { key: 'jobRef', label: 'Job reference', type: 'text' },
+    { key: 'reason', label: 'Reason', type: 'select', options: c => c.lists.refusalReasons, required: true, filter: true },
+    { key: 'details', label: 'Details', type: 'textarea', list: false },
+    { key: 'valid', label: 'Accepted as valid', type: 'select', options: ['Under review', 'Yes', 'No'], default: 'Under review', filter: true,
+      format: v => `<span class="badge ${v === 'Yes' ? 'good' : v === 'No' ? 'bad' : 'warn'}">${esc(v || 'Under review')}</span>` },
+    { key: 'reviewedBy', label: 'Reviewed by', type: 'text', list: false },
+  ],
+  summary: (rows, el) => {
+    const byR = [...groupBy(rows, r => r.reason || '')].sort((a, b) => b[1].length - a[1].length);
+    const byE = [...groupBy(rows, r => r.engineerName || '')].sort((a, b) => b[1].length - a[1].length).slice(0, 5);
+    el.innerHTML = `<div class="grid" style="--min:260px;margin-bottom:14px"><div class="card"><h3>By reason</h3><ul class="list-plain">${byR.map(([k, v]) => `<li class="row">${esc(k)}<span class="spacer"></span><b>${v.length}</b></li>`).join('') || '<li class="muted">None</li>'}</ul></div>
+      <div class="card"><h3>Most refusals</h3><ul class="list-plain">${byE.map(([k, v]) => `<li class="row">${esc(k)}<span class="spacer"></span><b>${v.length}</b></li>`).join('') || '<li class="muted">None</li>'}</ul></div></div>`;
+  },
+}, ctx);
+</script>
+</body>
+</html>

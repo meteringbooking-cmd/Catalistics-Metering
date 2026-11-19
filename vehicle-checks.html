@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vehicle Checks</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Vehicle Checks</h1><p>Daily walk-round checks. The panel on the right lists engineers who were marked as working on Attendance but have no check for that day.</p></div></div>
+  <div class="grid" style="--min:380px;margin-bottom:16px">
+    <div class="card"><div class="card-head"><h3>Check completion</h3><input type="date" id="missDay"></div><div class="grid" id="vcKpis" style="--min:150px"></div></div>
+    <div class="card"><div class="card-head"><h3>Working without a check</h3><span class="badge" id="missCount"></span></div><div id="missList" style="max-height:260px;overflow:auto"></div></div>
+  </div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const T = cfg.targets.vehicleCheckTarget;
+async function missing() {
+  const d = $('#missDay').value;
+  const [att, checks] = await Promise.all([fetchRange(C.attendance, d, d), fetchRange(C.vehicleChecks, d, d)]);
+  const working = att.filter(a => codeOf(a.code)?.type === 'working');
+  const done = new Set(checks.map(c => c.engineerId));
+  const miss = working.filter(a => !done.has(a.engineerId));
+  const pct = working.length ? (working.length - miss.length) / working.length * 100 : null;
+  const fails = checks.filter(c => c.result === 'Fail').length;
+  $('#vcKpis').innerHTML = `<div class="kpi ${rag(pct, T)}"><div class="label">Completed</div><div class="value">${fmtPct(pct, 0)}</div><div class="sub">${working.length - miss.length} of ${working.length} working · target ${T}%</div></div>
+    <div class="kpi ${fails ? 'bad' : 'good'}"><div class="label">Failed checks</div><div class="value">${fails}</div><div class="sub">${checks.length} checks recorded</div></div>`;
+  $('#missCount').className = 'badge ' + (miss.length ? 'bad' : 'good'); $('#missCount').textContent = miss.length;
+  $('#missList').innerHTML = miss.length ? `<ul class="list-plain">${miss.map(a => `<li class="row">${esc(a.engineerName)}<span class="spacer"></span><span class="muted">${esc(teamOf(a.teamId)?.name || '')}</span></li>`).join('')}</ul>`
+    : `<div class="muted">${working.length ? 'Everyone working has a check. 👍' : 'No attendance recorded for this day.'}</div>`;
+}
+$('#missDay').value = todayISO(); $('#missDay').onchange = missing; await missing();
+await logbook($('#book'), {
+  collection: C.vehicleChecks, dateField: 'date', defaultDays: 14, addLabel: 'Add check', sheetName: 'Vehicle checks',
+  fields: [
+    { key: 'date', label: 'Date', type: 'date', required: true, default: () => todayISO() },
+    ...engineerFields(),
+    { key: 'vehicleReg', label: 'Vehicle reg', type: 'text' },
+    { key: 'mileage', label: 'Mileage', type: 'number' },
+    { key: 'result', label: 'Result', type: 'select', options: ['Pass', 'Advisory', 'Fail'], default: 'Pass', required: true, filter: true,
+      format: v => `<span class="badge ${v === 'Pass' ? 'good' : v === 'Fail' ? 'bad' : 'warn'}">${esc(v)}</span>` },
+    { key: 'defects', label: 'Defects', type: 'textarea' },
+    { key: 'resolved', label: 'Defects resolved', type: 'checkbox' },
+  ],
+  beforeSave: d => ({ ...d, vehicleReg: (d.vehicleReg || '').toUpperCase() }),
+  rowClass: r => r.result === 'Fail' && !r.resolved ? 'row-bad' : r.result === 'Advisory' ? 'row-warn' : '',
+  afterSave: missing,
+}, ctx);
+</script>
+</body>
+</html>

@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Targets &amp; KPIs</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  .savebar { position: sticky; top: 58px; z-index: 10; display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 14px;
+    background: var(--panel-2); border: 1px solid var(--line-2); border-radius: var(--radius); }
+  .savebar .state { color: var(--muted); }
+  .savebar.dirty { border-color: var(--warn); }
+  .savebar.dirty .state { color: var(--warn); }
+  .editor td input[type=number] { max-width: 110px; }
+  .editor td input[type=text] { min-width: 120px; }
+  .lists-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .lists-grid textarea { width: 100%; min-height: 160px; font-size: 13px; }
+  .sec { margin-bottom: 18px; }
+</style>
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head">
+    <div>
+      <h1>Targets &amp; KPIs</h1>
+      <p>Every target, rate, contract, team and drop-down list used across the system is set here. Nothing is fixed in the pages themselves, so changing a value here changes it everywhere.</p>
+    </div>
+  </div>
+  <div class="savebar" id="savebar"><span class="state" id="saveState">All changes saved</span><div class="spacer"></div>
+    <button class="btn ghost" id="discard" type="button">Discard changes</button><button class="btn primary" id="save" type="button">Save settings</button></div>
+  <div class="tabs" id="tabs"></div>
+  <div id="panel"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, db, doc, setDoc, serverTimestamp, $, $$, esc, el, options, toast, confirmBox, uid, slug,
+  DEFAULT_CONFIG, mergeConfig, state } from './assets/app.js';
+
+const ctx = await initPage({ roles: ['admin'] });
+let w = structuredClone(ctx.cfg);
+let dirty = false;
+const markDirty = () => { dirty = true; $('#savebar').classList.add('dirty'); $('#saveState').textContent = 'Unsaved changes'; };
+window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+/* ---------- generic editors ---------- */
+function fieldsEditor(obj, defs) {
+  const box = el(`<div class="form-grid"></div>`);
+  for (const d of defs) {
+    const v = obj[d.key];
+    const input = d.type === 'select' ? `<select>${options(d.options, v)}</select>`
+      : d.type === 'time' ? `<input type="time" value="${esc(v)}">`
+      : d.type === 'text' ? `<input type="text" value="${esc(v)}">`
+      : `<input type="number" step="any" value="${esc(v)}">`;
+    const f = el(`<label class="field">${esc(d.label)}${input}${d.help ? `<span class="help">${esc(d.help)}</span>` : ''}</label>`);
+    const inp = $('input,select', f);
+    inp.oninput = () => { obj[d.key] = (d.type && d.type !== 'number') ? inp.value : (inp.value === '' ? 0 : Number(inp.value)); markDirty(); };
+    box.append(f);
+  }
+  return box;
+}
+function tableEditor(arr, cols, { newItem, addLabel = 'Add row', note = '' } = {}) {
+  const box = el(`<div><div class="table-wrap"><table class="table editor"><thead><tr>${cols.map(c => `<th>${esc(c.label)}</th>`).join('')}<th></th></tr></thead><tbody></tbody></table></div>
+    <div class="row" style="margin-top:10px"><button class="btn sm" type="button">+ ${esc(addLabel)}</button><span class="help">${esc(note)}</span></div></div>`);
+  const tbody = $('tbody', box);
+  const draw = () => {
+    tbody.innerHTML = '';
+    arr.forEach((item, i) => {
+      const tr = el(`<tr></tr>`);
+      for (const c of cols) {
+        const v = item[c.key];
+        const opts = typeof c.options === 'function' ? c.options() : c.options;
+        const html = c.type === 'checkbox' ? `<input type="checkbox" ${v !== false ? 'checked' : ''}>`
+          : c.type === 'color' ? `<input type="color" value="${esc(v || '#3d8fe0')}">`
+          : c.type === 'select' ? `<select>${options(opts, v)}</select>`
+          : c.type === 'number' ? `<input type="number" step="any" value="${esc(v)}">`
+          : `<input type="text" value="${esc(v)}">`;
+        const td = el(`<td>${html}</td>`);
+        const inp = $('input,select', td);
+        inp.oninput = inp.onchange = () => {
+          item[c.key] = c.type === 'checkbox' ? inp.checked : c.type === 'number' ? (inp.value === '' ? 0 : Number(inp.value)) : inp.value;
+          markDirty();
+        };
+        tr.append(td);
+      }
+      const del = el(`<td class="actions"><button class="btn sm danger" type="button" title="Remove">✕</button></td>`);
+      $('button', del).onclick = async () => {
+        if (!(await confirmBox('Remove this row? Records that already use it will keep their saved value.', { okLabel: 'Remove', danger: true }))) return;
+        arr.splice(i, 1); markDirty(); draw();
+      };
+      tr.append(del); tbody.append(tr);
+    });
+  };
+  $('.row button', box).onclick = () => { arr.push(newItem()); markDirty(); draw(); };
+  draw();
+  return box;
+}
+function listEditor(obj, key, label, help = '') {
+  const f = el(`<label class="field"><b style="color:var(--text)">${esc(label)}</b><textarea>${esc((obj[key] || []).join('\n'))}</textarea><span class="help">One per line. ${esc(help)}</span></label>`);
+  $('textarea', f).oninput = e => { obj[key] = e.target.value.split('\n').map(s => s.trim()).filter(Boolean); markDirty(); };
+  return f;
+}
+const section = (title, desc, ...children) => {
+  const s = el(`<div class="card sec"><div class="card-head"><div><h2 style="margin:0">${esc(title)}</h2>${desc ? `<div class="muted">${desc}</div>` : ''}</div></div></div>`);
+  s.append(...children); return s;
+};
+
+/* ---------- tabs ---------- */
+const TYPES = [
+  { value: 'working', label: 'Working (on jobs)' }, { value: 'nonProductive', label: 'At work, not on jobs' },
+  { value: 'holiday', label: 'Holiday' }, { value: 'sickness', label: 'Sickness' },
+  { value: 'absence', label: 'Other absence' }, { value: 'off', label: 'Not scheduled' },
+];
+const DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']];
+
+const TABS = {
+  company: ['Company', () => {
+    const p = el('<div></div>');
+    p.append(section('Client details', 'Shown in the sidebar, on screens and on exports.', fieldsEditor(w.company, [
+      { key: 'clientName', label: 'Client company name', type: 'text' },
+      { key: 'tagline', label: 'Tagline', type: 'text' },
+      { key: 'currency', label: 'Currency symbol', type: 'text' },
+      { key: 'screenRefreshMinutes', label: 'Wall screens refresh every (minutes)' },
+      { key: 'timeZone', label: 'Time zone', type: 'text', help: 'Used by Catalistics AI to know what "today" is, e.g. Europe/London.' },
+    ])));
+    const days = el(`<div class="row">${DAYS.map(([d, l]) => `<label class="field inline"><input type="checkbox" value="${d}" ${w.company.workingDays.includes(d) ? 'checked' : ''}> ${l}</label>`).join('')}</div>`);
+    $$('input', days).forEach(i => i.onchange = () => { w.company.workingDays = $$('input:checked', days).map(x => Number(x.value)); markDirty(); });
+    const bh = el(`<div><label class="field">Bank holidays (YYYY-MM-DD, one per line)<textarea style="min-height:140px">${esc(w.company.bankHolidays.join('\n'))}</textarea></label>
+      <div class="row" style="margin-top:10px"><select id="bhRegion">${options([{ value: 'england-and-wales', label: 'England & Wales' }, { value: 'scotland', label: 'Scotland' }, { value: 'northern-ireland', label: 'Northern Ireland' }], 'england-and-wales')}</select>
+      <button class="btn sm" type="button" id="bhLoad">Load UK bank holidays</button><span class="help">Fetched from GOV.UK.</span></div></div>`);
+    const ta = $('textarea', bh);
+    ta.oninput = () => { w.company.bankHolidays = ta.value.split('\n').map(s => s.trim()).filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s)); markDirty(); };
+    $('#bhLoad', bh).onclick = async () => {
+      try {
+        const r = await fetch('https://www.gov.uk/bank-holidays.json'); const j = await r.json();
+        const dates = j[$('#bhRegion', bh).value].events.map(e => e.date).filter(d => d >= `${new Date().getFullYear() - 1}-01-01`);
+        w.company.bankHolidays = [...new Set([...w.company.bankHolidays, ...dates])].sort(); ta.value = w.company.bankHolidays.join('\n'); markDirty();
+        toast(`Added ${dates.length} dates`, 'good');
+      } catch (e) { toast('Could not reach GOV.UK — type the dates in instead.', 'warn'); }
+    };
+    p.append(section('Working days', 'Used to work out the "last working day", targets and capacity.', days, el('<div class="divider"></div>'), bh));
+    return p;
+  }],
+
+  contracts: ['Contracts & targets', () => section('Contracts and their targets',
+    'Daily meter target is <b>per engineer per working day</b>. Revenue and cost drive the Finance and Executive pages.',
+    tableEditor(w.contracts, [
+      { key: 'name', label: 'Contract name' },
+      { key: 'colour', label: 'Colour', type: 'color' },
+      { key: 'active', label: 'Active', type: 'checkbox' },
+      { key: 'dailyMeterTarget', label: 'Meters / engineer / day', type: 'number' },
+      { key: 'completionTarget', label: 'Completion target %', type: 'number' },
+      { key: 'abortRateMax', label: 'Max abort %', type: 'number' },
+      { key: 'milesPerMeterMax', label: 'Max miles / meter', type: 'number' },
+      { key: 'revenuePerMeter', label: 'Revenue / meter', type: 'number' },
+      { key: 'costPerEngineerDay', label: 'Cost / engineer day', type: 'number' },
+    ], { addLabel: 'Add contract', newItem: () => ({ ...structuredClone(DEFAULT_CONFIG.contracts[0]), id: 'contract-' + uid(), name: 'New contract', colour: '#a78bfa' }) }))],
+
+  teams: ['Teams', () => section('Teams', 'Each engineer belongs to one team. Teams roll up to a contract.',
+    tableEditor(w.teams, [
+      { key: 'name', label: 'Team name' },
+      { key: 'leader', label: 'Team leader' },
+      { key: 'contractId', label: 'Contract', type: 'select', options: () => w.contracts.map(c => ({ value: c.id, label: c.name })) },
+    ], { addLabel: 'Add team', newItem: () => ({ id: 'team-' + uid(), name: `Team ${w.teams.length + 1}`, leader: `Team Leader ${w.teams.length + 1}`, contractId: w.contracts[0]?.id || '' }) }))],
+
+  attendance: ['Attendance codes', () => section('Attendance codes', 'The "type" decides how a code counts: attendance % = days at work ÷ (days at work + sickness + other absence).',
+    tableEditor(w.attendanceCodes, [
+      { key: 'code', label: 'Code' }, { key: 'label', label: 'Meaning' },
+      { key: 'type', label: 'Counts as', type: 'select', options: TYPES }, { key: 'colour', label: 'Colour', type: 'color' },
+    ], { addLabel: 'Add code', newItem: () => ({ code: '?', label: 'New code', type: 'working', colour: '#8ea2c4' }) }))],
+
+  kpis: ['KPI targets', () => {
+    const p = el('<div></div>');
+    p.append(section('Company-wide targets', '', fieldsEditor(w.targets, [
+      { key: 'attendanceTarget', label: 'Attendance target %' },
+      { key: 'vehicleCheckTarget', label: 'Vehicle check completion target %' },
+      { key: 'complianceTarget', label: 'Compliance audit pass-rate target %' },
+      { key: 'complaintResponseDays', label: 'Complaint response target (days)' },
+      { key: 'escalationTargetDays', label: 'Escalation resolution target (days)' },
+      { key: 'qualificationWarnDays', label: 'Warn about qualifications expiring within (days)' },
+      { key: 'calibrationIntervalMonths', label: 'Tester calibration interval (months)' },
+      { key: 'amberBandPct', label: 'Amber band (% short of target)', help: 'How far below a target still shows amber rather than red.' },
+      { key: 'capacityGoodPct', label: 'Capacity planner: green at or above %' },
+      { key: 'capacityWarnPct', label: 'Capacity planner: amber at or above %' },
+      { key: 'leagueMinDays', label: 'League table: minimum days worked', help: 'Engineers with fewer days are left out by default.' },
+    ]), el('<div class="divider"></div>'), fieldsEditor(w.compliance, [{ key: 'passMark', label: 'Audit pass mark (score %)', help: 'An audit scoring at or above this is a pass.' }])));
+    p.append(section('League table weighting', 'How much each measure counts towards an engineer\'s league score. They are scaled to add up to 100.',
+      fieldsEditor(w.league.weights, [
+        { key: 'meters', label: 'Meters against target' }, { key: 'completion', label: 'Completion %' },
+        { key: 'aborts', label: 'Low abort rate' }, { key: 'attendance', label: 'Attendance %' }, { key: 'compliance', label: 'Compliance pass rate' },
+      ])));
+    return p;
+  }],
+
+  bonus: ['Bonus', () => {
+    const p = el('<div></div>');
+    p.append(section('Bonus rates', 'Bonus = (meters above the daily threshold × rate per meter + completed jobs × rate per job) × quality multiplier − deductions.',
+      fieldsEditor(w.bonus, [
+        { key: 'thresholdMetersPerDay', label: 'Meters per day before bonus starts' },
+        { key: 'ratePerMeter', label: `Rate per meter above threshold (${w.company.currency})` },
+        { key: 'ratePerCompletedJob', label: `Rate per completed job (${w.company.currency})` },
+        { key: 'minCompletionPct', label: 'Minimum completion % to qualify', help: 'Below this, no bonus is paid for the period.' },
+      ])));
+    p.append(section('Quality multiplier', 'Based on the engineer\'s compliance audit pass rate for the period. The highest band they reach applies.',
+      tableEditor(w.bonus.qualityBands, [{ key: 'min', label: 'Pass rate at least %', type: 'number' }, { key: 'multiplier', label: 'Multiplier (e.g. 0.9)', type: 'number' }],
+        { addLabel: 'Add band', newItem: () => ({ min: 0, multiplier: 1 }) })));
+    p.append(section('Deduction reasons', '', listEditor(w.bonus, 'deductionTypes', 'Deduction reasons')));
+    return p;
+  }],
+
+  fleet: ['Fleet & absence', () => {
+    const p = el('<div></div>');
+    p.append(section('Van times & driving', '', fieldsEditor(w.fleet, [
+      { key: 'lateStartAfter', label: 'Late start if first journey after', type: 'time' },
+      { key: 'earlyFinishBefore', label: 'Early finish if last journey ends before', type: 'time' },
+      { key: 'afterHoursAfter', label: 'After-hours driving after', type: 'time' },
+      { key: 'longDayHours', label: 'Long day if longer than (hours)' },
+      { key: 'speedingToleranceMph', label: 'Serious speeding if over the limit by (mph)' },
+    ])));
+    p.append(section('Absence triggers', 'Bradford Factor = (number of spells)² × total days, over the look-back period.', fieldsEditor(w.absence, [
+      { key: 'bradfordTrigger', label: 'Bradford Factor trigger' },
+      { key: 'occurrenceTrigger', label: 'Number of spells trigger' },
+      { key: 'lookbackMonths', label: 'Look-back period (months)' },
+    ])));
+    return p;
+  }],
+
+  lists: ['Lists', () => {
+    const p = el('<div></div>');
+    const L = w.lists;
+    const grid = el('<div class="lists-grid"></div>');
+    [['qualifications', 'Qualifications (skills matrix)'], ['auditCategories', 'Audit categories'], ['complaintCategories', 'Complaint categories'],
+     ['absenceTypes', 'Absence types'], ['meetingTypes', 'Meeting types'], ['abortReasons', 'Abort reasons'], ['refusalReasons', 'Job refusal reasons'],
+     ['customerPaymentTypes', 'Customer payment types'], ['escalationTypes', 'Escalation types'], ['documentCategories', 'Document categories'],
+     ['employmentTypes', 'Employment types'], ['engineerLevels', 'Engineer levels'], ['financeCategories', 'Finance cost categories'], ['jobOutcomes', 'Job outcomes (scheduling)', 'Keep Booked, Completed, Aborted, No access, Cancelled and Rescheduled — they drive the totals sent to performance.']]
+      .forEach(([k, l, h]) => grid.append(listEditor(L, k, l, h)));
+    p.append(section('Drop-down lists', 'These fill the choices on forms across the system.', grid));
+    p.append(section('Additional payment types', 'Claims are valued as quantity × rate.', tableEditor(L.paymentTypes, [
+      { key: 'name', label: 'Payment type' }, { key: 'unit', label: 'Unit (day, hour…)' }, { key: 'rate', label: 'Rate', type: 'number' },
+    ], { addLabel: 'Add type', newItem: () => ({ name: 'New type', unit: 'item', rate: 0 }) })));
+    p.append(section('Job types (scheduling)', 'Standard duration of each job type, used to size an engineer\'s day.', tableEditor(L.jobTypes, [
+      { key: 'name', label: 'Job type' }, { key: 'minutes', label: 'Minutes', type: 'number' }, { key: 'meters', label: 'Meters fitted when completed', type: 'number' },
+    ], { addLabel: 'Add job type', newItem: () => ({ name: 'New job type', minutes: 60, meters: 1 }) })));
+    p.append(section('Scheduling day', '', fieldsEditor(L, [{ key: 'dayCapacityHours', label: 'Working hours available per engineer per day', help: 'Used to show how full each engineer\'s day is.' }])));
+    return p;
+  }],
+
+  ai: ['AI assistant', () => {
+    const p = el('<div></div>');
+    const A = w.ai;
+    const on = el(`<label class="field inline"><input type="checkbox" ${A.enabled ? 'checked' : ''}> Catalistics AI is switched on</label>`);
+    $('input', on).onchange = e => { A.enabled = e.target.checked; markDirty(); };
+    p.append(section('Catalistics AI', 'Answers questions about this client\'s data using Claude. It needs the AI Cloud Function and an API key — see the README.', on, el('<div class="divider"></div>'),
+      fieldsEditor(A, [
+        { key: 'assistantName', label: 'Assistant name', type: 'text' },
+        { key: 'model', label: 'Claude model', type: 'text', help: 'e.g. claude-sonnet-5-5 (balanced) or claude-haiku-5-5 (cheapest).' },
+        { key: 'inputPricePerMillion', label: 'Price per million input tokens', help: 'From the Claude pricing page, used for the cost estimates.' },
+        { key: 'outputPricePerMillion', label: 'Price per million output tokens' },
+        { key: 'priceCurrency', label: 'Price currency symbol', type: 'text' },
+        { key: 'monthlyBudget', label: 'Monthly budget', help: 'Questions stop once this month\'s estimated spend reaches it. 0 = no limit.' },
+        { key: 'dailyQuestionsPerUser', label: 'Questions per person per day', help: '0 = no limit.' },
+        { key: 'maxAnswerTokens', label: 'Longest answer (tokens)' },
+        { key: 'maxToolRounds', label: 'Most data look-ups per question' },
+      ])));
+    p.append(section('Suggested questions', 'Shown as one-click prompts on the Catalistics AI page.', listEditor(A, 'suggestedQuestions', 'Suggested questions')));
+    return p;
+  }],
+
+  backup: ['Backup', () => {
+    const p = el(`<div class="card"><h2>Backup &amp; restore</h2>
+      <p class="muted">Download these settings as a file, load them into another installation, or go back to the defaults.</p>
+      <div class="row"><button class="btn" id="dl" type="button">⬇ Download settings</button>
+      <label class="btn" style="cursor:pointer">⬆ Load settings file<input type="file" accept=".json" hidden id="ul"></label>
+      <button class="btn danger" id="reset" type="button">Reset to defaults</button></div></div>`);
+    $('#dl', p).onclick = () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(w, null, 2)], { type: 'application/json' }));
+      a.download = `catalistics-settings-${slug(w.company.clientName)}.json`; a.click();
+    };
+    $('#ul', p).onchange = async e => {
+      try { w = mergeConfig(JSON.parse(await e.target.files[0].text())); markDirty(); show('company'); toast('Loaded — review and press Save', 'good'); }
+      catch (err) { toast('That file is not a valid settings file', 'bad'); }
+    };
+    $('#reset', p).onclick = async () => {
+      if (!(await confirmBox('Replace every setting with the defaults? Nothing is saved until you press Save.', { okLabel: 'Reset' }))) return;
+      const name = w.company.clientName; w = structuredClone(DEFAULT_CONFIG); w.company.clientName = name; markDirty(); show('company');
+    };
+    return p;
+  }],
+};
+
+let current = 'company';
+$('#tabs').innerHTML = Object.entries(TABS).map(([k, [l]]) => `<button type="button" data-k="${k}">${esc(l)}</button>`).join('');
+$$('#tabs button').forEach(b => b.onclick = () => show(b.dataset.k));
+function show(k) {
+  current = k;
+  $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.k === k));
+  $('#panel').innerHTML = ''; $('#panel').append(TABS[k][1]());
+}
+show(new URLSearchParams(location.search).get('tab') || 'company');
+
+function validate() {
+  const problems = [];
+  if (!w.company.clientName?.trim()) problems.push('Client name is empty.');
+  if (!w.contracts.length) problems.push('Add at least one contract.');
+  const codes = w.attendanceCodes.map(c => c.code.trim().toUpperCase());
+  if (new Set(codes).size !== codes.length) problems.push('Two attendance codes are the same.');
+  for (const c of w.contracts) if (!c.name?.trim()) problems.push('A contract has no name.');
+  for (const t of w.teams) if (!w.contracts.some(c => c.id === t.contractId)) problems.push(`${t.name || 'A team'} is not linked to a contract.`);
+  return problems;
+}
+$('#save').onclick = async () => {
+  const problems = validate();
+  if (problems.length) { toast(problems[0], 'warn'); return; }
+  w.attendanceCodes.forEach(c => c.code = c.code.trim().toUpperCase());
+  w.bonus.qualityBands.sort((a, b) => b.min - a.min);
+  try {
+    await setDoc(doc(db, C.settings, 'config'), { ...w, updatedAt: serverTimestamp(), updatedBy: ctx.user.email });
+    state.cfg = w; ctx.cfg = structuredClone(w); dirty = false; $('#savebar').classList.remove('dirty'); $('#saveState').textContent = 'All changes saved';
+    $('.sidebar .client').textContent = w.company.clientName;
+    toast('Settings saved', 'good');
+  } catch (e) { toast(e.message, 'bad'); }
+};
+$('#discard').onclick = () => { w = structuredClone(ctx.cfg); dirty = false; $('#savebar').classList.remove('dirty'); $('#saveState').textContent = 'All changes saved'; show(current); };
+</script>
+</body>
+</html>

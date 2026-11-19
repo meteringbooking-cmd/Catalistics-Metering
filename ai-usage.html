@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Usage</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>AI Usage</h1><p id="intro"></p></div></div>
+  <div class="grid" id="kpis" style="--min:190px;margin-bottom:16px"></div>
+  <div class="grid" style="--min:420px;margin-bottom:16px">
+    <div class="card"><div class="card-head"><h3>Cost per day · last 30 days</h3></div><div class="chart-box" style="--h:230px"><canvas id="chart"></canvas></div></div>
+    <div class="card"><div class="card-head"><h3>This month by person</h3></div><div class="table-wrap" style="--max-h:240px"><table class="table" id="people"></table></div></div>
+  </div>
+  <div class="card"><div class="card-head"><h2 style="margin:0">Questions asked</h2></div><div id="book"></div></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, fetchRange, todayISO, addDays, groupBy, num, fmtNum, fmtDate, drawChart } from './assets/app.js';
+import { logbook } from './assets/logbook.js';
+
+const ctx = await initPage({ roles: ['admin'] }); const { cfg } = ctx; const AI = cfg.ai;
+const money = v => `${AI.priceCurrency}${Number(v || 0).toFixed(Number(v) < 1 ? 3 : 2)}`;
+$('#intro').innerHTML = `Every question asked of ${esc(AI.assistantName)}. Costs are estimates from the token prices on <a href="data-input.html?tab=ai">Targets &amp; KPIs → AI assistant</a> — your Claude Console bill is the final figure.`;
+
+async function summary() {
+  const today = todayISO(), month = today.slice(0, 7);
+  const rows = await fetchRange(C.aiUsage, addDays(today, -40), today);
+  const m = rows.filter(r => r.month === month);
+  const spent = m.reduce((t, r) => t + num(r.cost), 0);
+  const budget = num(AI.monthlyBudget);
+  const used = budget ? spent / budget * 100 : null;
+  $('#kpis').innerHTML = `
+    <div class="kpi ${used === null ? '' : used >= 100 ? 'bad' : used >= 80 ? 'warn' : 'good'}"><div class="label">Spent this month</div><div class="value">${money(spent)}</div><div class="sub">${budget ? `of ${money(budget)} budget` : 'No budget set'}</div>${budget ? `<div class="bar"><span style="width:${Math.min(100, used)}%"></span></div>` : ''}</div>
+    <div class="kpi"><div class="label">Questions this month</div><div class="value">${fmtNum(m.length)}</div><div class="sub">${new Set(m.map(r => r.uid)).size} people</div></div>
+    <div class="kpi"><div class="label">Average cost per question</div><div class="value">${money(m.length ? spent / m.length : 0)}</div><div class="sub">Model ${esc(AI.model)}</div></div>
+    <div class="kpi"><div class="label">Average answer time</div><div class="value">${fmtNum(m.length ? m.reduce((t, r) => t + num(r.ms), 0) / m.length / 1000 : 0, 1)}s</div><div class="sub">${AI.enabled ? 'AI switched on' : 'AI switched off'}</div></div>`;
+  const days = Array.from({ length: 30 }, (_, i) => addDays(today, i - 29));
+  drawChart($('#chart'), { type: 'bar', data: { labels: days.map(d => fmtDate(d, { day: '2-digit', month: 'short' })),
+    datasets: [{ label: 'Cost', data: days.map(d => rows.filter(r => r.date === d).reduce((t, r) => t + num(r.cost), 0)), backgroundColor: '#3d8fe0cc', borderRadius: 3 }] },
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => AI.priceCurrency + v } } } } });
+  const people = [...groupBy(m, r => r.uid)].map(([, rs]) => ({ name: rs[0].name || rs[0].email, n: rs.length, cost: rs.reduce((t, r) => t + num(r.cost), 0) })).sort((a, b) => b.cost - a.cost);
+  $('#people').innerHTML = `<thead><tr><th>Person</th><th class="num">Questions</th><th class="num">Cost</th></tr></thead><tbody>${people.map(p => `<tr><td>${esc(p.name)}</td><td class="num">${p.n}</td><td class="num">${money(p.cost)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No questions yet this month.</td></tr>'}</tbody>`;
+}
+await summary();
+
+await logbook($('#book'), {
+  collection: C.aiUsage, dateField: 'date', defaultDays: 30, canAdd: false, importable: false, canEdit: () => false, deleteRoles: [], sheetName: 'AI usage',
+  fields: [
+    { key: 'date', label: 'Date', type: 'date' },
+    { key: 'name', label: 'Asked by', type: 'text' },
+    { key: 'email', label: 'Email', type: 'text', list: false },
+    { key: 'question', label: 'Question', type: 'text', format: v => `<span style="display:block;max-width:520px">${esc(v)}</span>` },
+    { key: 'answerPreview', label: 'Answer (start)', type: 'text', list: false },
+    { key: 'toolsUsed', label: 'Look-ups', type: 'text', format: v => fmtNum((v || []).length), exportValue: v => (v || []).join(', ') },
+    { key: 'inputTokens', label: 'Tokens in', type: 'number' },
+    { key: 'outputTokens', label: 'Tokens out', type: 'number' },
+    { key: 'cost', label: 'Cost', type: 'number', format: v => money(v) },
+    { key: 'model', label: 'Model', type: 'text', list: false },
+  ],
+}, ctx);
+</script>
+</body>
+</html>

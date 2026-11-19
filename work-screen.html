@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Work Screen</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  .contract { margin-bottom: 22px; }
+  .contract .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .contract .lower { display: grid; gap: 12px; grid-template-columns: 2fr 1fr; margin-top: 12px; }
+  @media (max-width: 1100px) { .contract .lower { grid-template-columns: 1fr; } }
+  .period { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .period .kpi .value { font-size: 24px; }
+  .bottom { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .updated { font-size: 12px; color: var(--faint); }
+</style>
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="screen-head">
+    <img src="assets/logo.png" alt="Catalistics">
+    <div><div style="font-family:var(--display);font-size:22px;font-weight:700" id="client"></div><div class="muted">Work Screen · <span id="dayLabel"></span></div></div>
+    <div class="clock"><span id="clock"></span><small id="date"></small><div class="updated" id="updated"></div></div>
+  </div>
+  <div class="toolbar" id="controls">
+    <label class="field">Day shown<input type="date" id="day"></label>
+    <button class="btn" id="refresh" type="button">↻ Refresh</button>
+    <a class="btn ghost" id="tv" href="?tv=1">⛶ TV mode</a>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="daily-performance.html">Daily table</a>
+    <a class="btn ghost" href="performance-report.html">Full report</a>
+  </div>
+  <div id="contracts"></div>
+  <div class="bottom">
+    <div class="card"><div class="card-head"><h3>Attendance</h3><span class="badge" id="attBadge"></span></div><div id="attBox"></div></div>
+    <div class="card"><div class="card-head"><h3>Top engineers</h3></div><div id="topBox"></div></div>
+    <div class="card"><div class="card-head"><h3>Needs attention</h3></div><div id="alertBox"></div></div>
+  </div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, fetchRange, fetchAll, where, prevWorkingDay, lastNWorkingDays, monthStart, weekStart, workingDaysBetween, monthEnd,
+  aggregate, attendanceSummary, rag, fmtNum, fmtPct, fmtDate, fmtDateLong, activeContracts, drawChart, codeOf, todayISO, addDays, daysBetween } from './assets/app.js';
+
+const ctx = await initPage();
+const { cfg } = ctx;
+const tv = new URLSearchParams(location.search).has('tv');
+if (tv) { $('#controls').hidden = true; }
+$('#client').textContent = cfg.company.clientName;
+$('#day').value = prevWorkingDay();
+const tick = () => { const d = new Date(); $('#clock').textContent = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); $('#date').textContent = fmtDateLong(todayISO()); };
+tick(); setInterval(tick, 15000);
+
+function kpi(label, value, sub, cls = '', bar = null) {
+  return `<div class="kpi ${cls}"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div>${bar !== null ? `<div class="bar"><span style="width:${Math.max(0, Math.min(100, bar || 0))}%"></span></div>` : ''}</div>`;
+}
+
+async function load() {
+  const day = $('#day').value;
+  $('#dayLabel').textContent = fmtDateLong(day);
+  const days10 = lastNWorkingDays(10, day);
+  const from = [days10[0], monthStart(day)].sort()[0];
+  const [perf, att, checks, complaints, escalations] = await Promise.all([
+    fetchRange(C.dailyPerformance, from, day),
+    fetchRange(C.attendance, day, day),
+    fetchRange(C.vehicleChecks, day, day),
+    fetchAll(C.complaints, where('status', '!=', 'Closed')).catch(() => []),
+    fetchAll(C.escalations, where('status', '!=', 'Closed')).catch(() => []),
+  ]);
+
+  const box = $('#contracts'); box.innerHTML = '';
+  for (const c of activeContracts(cfg)) {
+    const mine = perf.filter(r => r.contractId === c.id);
+    const today = aggregate(mine.filter(r => r.date === day), cfg);
+    const wtd = aggregate(mine.filter(r => r.date >= weekStart(day) && r.date <= day), cfg);
+    const mtd = aggregate(mine.filter(r => r.date >= monthStart(day) && r.date <= day), cfg);
+    const working = att.filter(a => a.contractId === c.id && codeOf(a.code, cfg)?.type === 'working');
+    const workingIds = new Set(working.map(a => a.engineerId).concat(mine.filter(r => r.date === day).map(r => r.engineerId)));
+    const checked = new Set(checks.filter(v => v.contractId === c.id).map(v => v.engineerId));
+    const checkPct = workingIds.size ? ([...workingIds].filter(id => checked.has(id)).length / workingIds.size) * 100 : null;
+    const attC = attendanceSummary(att.filter(a => a.contractId === c.id), cfg);
+
+    // Month forecast: month-to-date run rate × all working days in the month
+    const mDaysDone = workingDaysBetween(monthStart(day), day, cfg).length;
+    const mDaysAll = workingDaysBetween(monthStart(day), monthEnd(day), cfg).length;
+    const forecast = mDaysDone ? (mtd.meters / mDaysDone) * mDaysAll : 0;
+    const forecastTarget = mDaysDone ? (mtd.target / mDaysDone) * mDaysAll : 0;
+
+    const sec = document.createElement('section');
+    sec.className = 'contract card';
+    sec.innerHTML = `
+      <div class="contract-title"><span class="swatch" style="background:${c.colour}"></span>${esc(c.name)}<span class="muted" style="font-size:13px;font-weight:500">· ${fmtDate(day)}</span></div>
+      <div class="kpis">
+        ${kpi('Meters installed', fmtNum(today.meters), `Target ${fmtNum(today.target, 1)} · ${fmtPct(today.targetPct, 0)}`, rag(today.targetPct, 100), today.targetPct)}
+        ${kpi('Completion', fmtPct(today.completionPct), `${fmtNum(today.completed)} / ${fmtNum(today.booked)} jobs · target ${c.completionTarget}%`, rag(today.completionPct, c.completionTarget), today.completionPct)}
+        ${kpi('Abort rate', fmtPct(today.abortPct), `${fmtNum(today.aborts)} aborts · max ${c.abortRateMax}%`, rag(today.abortPct, c.abortRateMax, { higher: false }))}
+        ${kpi('Miles per meter', fmtNum(today.milesPerMeter, 1), `Max ${c.milesPerMeterMax}`, rag(today.milesPerMeter, c.milesPerMeterMax, { higher: false }))}
+        ${kpi('Engineers working', fmtNum(workingIds.size), `${fmtNum(today.metersPerDay, 2)} meters each · target ${c.dailyMeterTarget}`, '')}
+        ${kpi('Attendance', fmtPct(attC.attendancePct), `${attC.sickness} sick · ${attC.holiday} holiday`, rag(attC.attendancePct, cfg.targets.attendanceTarget))}
+        ${kpi('Vehicle checks', fmtPct(checkPct, 0), `${checked.size} done · target ${cfg.targets.vehicleCheckTarget}%`, rag(checkPct, cfg.targets.vehicleCheckTarget), checkPct)}
+      </div>
+      <div class="lower">
+        <div class="card" style="background:var(--bg-2)"><div class="card-head"><h3>Last 10 working days</h3></div><div class="chart-box" style="--h:220px"><canvas></canvas></div></div>
+        <div class="period">
+          ${kpi('Week to date', fmtNum(wtd.meters), `Target ${fmtNum(wtd.target, 0)} · ${fmtPct(wtd.targetPct, 0)}`, rag(wtd.targetPct, 100), wtd.targetPct)}
+          ${kpi('Month to date', fmtNum(mtd.meters), `Target ${fmtNum(mtd.target, 0)} · ${fmtPct(mtd.targetPct, 0)}`, rag(mtd.targetPct, 100), mtd.targetPct)}
+          ${kpi('Month forecast', fmtNum(forecast), `Target ${fmtNum(forecastTarget, 0)} at this headcount`, rag(forecast, forecastTarget))}
+          ${kpi('MTD completion', fmtPct(mtd.completionPct), `Aborts ${fmtPct(mtd.abortPct)}`, rag(mtd.completionPct, c.completionTarget))}
+        </div>
+      </div>`;
+    box.append(sec);
+    const series = days10.map(d => aggregate(mine.filter(r => r.date === d), cfg));
+    drawChart(sec.querySelector('canvas'), {
+      data: {
+        labels: days10.map(d => fmtDate(d, { day: '2-digit', month: 'short' })),
+        datasets: [
+          { type: 'bar', label: 'Meters', data: series.map(s => s.meters), backgroundColor: c.colour + 'cc', borderRadius: 4, yAxisID: 'y' },
+          { type: 'line', label: 'Target', data: series.map(s => Math.round(s.target * 10) / 10), borderColor: '#f3b440', borderDash: [5, 4], pointRadius: 0, yAxisID: 'y' },
+          { type: 'line', label: 'Completion %', data: series.map(s => s.completionPct && Math.round(s.completionPct)), borderColor: '#e9f0fb', pointRadius: 2, tension: .3, yAxisID: 'y2' },
+        ],
+      },
+      options: { scales: { y: { beginAtZero: true }, y2: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { callback: v => v + '%' } } } },
+    });
+  }
+  if (!activeContracts(cfg).length) box.innerHTML = '<div class="card empty">No active contracts. Add one on Targets &amp; KPIs.</div>';
+
+  // Attendance by code
+  const s = attendanceSummary(att, cfg);
+  $('#attBadge').className = 'badge ' + rag(s.attendancePct, cfg.targets.attendanceTarget);
+  $('#attBadge').textContent = fmtPct(s.attendancePct);
+  const counts = cfg.attendanceCodes.map(code => ({ code, n: att.filter(a => a.code === code.code).length })).filter(x => x.n);
+  $('#attBox').innerHTML = counts.length ? `<ul class="list-plain">${counts.map(x => `<li class="row"><span class="code-chip" style="background:${x.code.colour}2e;color:${x.code.colour}">${esc(x.code.code)}</span>${esc(x.code.label)}<span class="spacer"></span><b>${x.n}</b></li>`).join('')}</ul>` : '<div class="muted">No attendance recorded for this day.</div>';
+
+  // Top engineers
+  const top = perf.filter(r => r.date === day).sort((a, b) => b.metersInstalled - a.metersInstalled || b.jobsCompleted - a.jobsCompleted).slice(0, 6);
+  $('#topBox').innerHTML = top.length ? `<ul class="list-plain">${top.map((r, i) => `<li class="row"><b style="width:22px">${i + 1}</b>${esc(r.engineerName)}<span class="spacer"></span><span class="muted">${fmtNum(r.jobsCompleted)} jobs</span><b>${fmtNum(r.metersInstalled)} meters</b></li>`).join('')}</ul>` : '<div class="muted">No figures for this day yet.</div>';
+
+  // Alerts
+  const overdue = complaints.filter(c => c.targetDate && c.targetDate < todayISO());
+  const oldEsc = escalations.filter(e => e.dateRaised && daysBetween(e.dateRaised, todayISO()) > cfg.targets.escalationTargetDays);
+  const missing = perf.filter(r => r.date === day).length ? 0 : 1;
+  $('#alertBox').innerHTML = `<ul class="list-plain">
+    ${missing ? `<li class="t-warn">No performance figures submitted for ${fmtDate(day)}.</li>` : ''}
+    <li class="row"><a href="complaints.html">Open complaints</a><span class="spacer"></span><b>${complaints.length}</b>${overdue.length ? `<span class="badge bad">${overdue.length} overdue</span>` : ''}</li>
+    <li class="row"><a href="escalations.html">Open escalations</a><span class="spacer"></span><b>${escalations.length}</b>${oldEsc.length ? `<span class="badge warn">${oldEsc.length} over ${cfg.targets.escalationTargetDays} days</span>` : ''}</li>
+  </ul>`;
+  $('#updated').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+}
+
+$('#day').onchange = load;
+$('#refresh').onclick = load;
+await load();
+setInterval(() => { if (tv) $('#day').value = prevWorkingDay(); load(); }, Math.max(1, cfg.company.screenRefreshMinutes) * 60000);
+</script>
+</body>
+</html>

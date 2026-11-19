@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Performance Report</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Performance Report</h1><p>Pick any date range. Totals, a daily trend, and tables by team and by engineer — all exportable to Excel.</p></div></div>
+  <div class="toolbar">
+    <label class="field">From<input type="date" id="from"></label>
+    <label class="field">To<input type="date" id="to"></label>
+    <div id="presets"></div>
+    <label class="field">Contract<span id="cWrap"></span></label>
+    <label class="field">Team<span id="tWrap"></span></label>
+    <div class="spacer"></div><button class="btn" id="export" type="button">⬇ Export to Excel</button>
+  </div>
+  <div class="grid" id="kpis" style="--min:165px;margin-bottom:16px"></div>
+  <div class="card"><div class="card-head"><h3>Daily trend</h3></div><div class="chart-box" style="--h:280px"><canvas id="trend"></canvas></div></div>
+  <div class="card"><div class="card-head"><h3>By team</h3></div><div class="table-wrap"><table class="table" id="teamTbl"></table></div></div>
+  <div class="card"><div class="card-head"><h3>By engineer</h3><label class="field inline"><input type="checkbox" id="onlyBelow"> Only those below target</label></div><div class="table-wrap" style="--max-h:70vh"><table class="table" id="engTbl"></table></div></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, fetchRange, aggregate, attendanceSummary, rag, fmtNum, fmtPct, fmtMoney, fmtDate, contractSelect, teamSelect, teamOf, contractOf,
+  groupBy, rangePreset, presetButtons, workingDaysBetween, drawChart, exportXlsx, makeSortable } from './assets/app.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+$('#cWrap').innerHTML = contractSelect('contract'); $('#tWrap').innerHTML = teamSelect('team');
+[$('#from').value, $('#to').value] = rangePreset('mtd');
+$('#presets').append(presetButtons((f, t) => { $('#from').value = f; $('#to').value = t; load(); }));
+$('#contract').onchange = () => { $('#tWrap').innerHTML = teamSelect('team', '', 'All teams', $('#contract').value); $('#team').onchange = load; load(); };
+['from', 'to', 'team'].forEach(id => $('#' + id).onchange = load);
+$('#onlyBelow').onchange = () => render();
+let data = null;
+
+async function load() {
+  const from = $('#from').value, to = $('#to').value, cid = $('#contract').value, tid = $('#team').value;
+  const keep = r => (!cid || r.contractId === cid) && (!tid || r.teamId === tid);
+  const [perf, att] = await Promise.all([fetchRange(C.dailyPerformance, from, to), fetchRange(C.attendance, from, to)]);
+  data = { from, to, perf: perf.filter(keep), att: att.filter(keep) };
+  render();
+}
+function engRows() {
+  const byEng = groupBy(data.perf, r => r.engineerId);
+  const attBy = groupBy(data.att, r => r.engineerId);
+  return [...byEng.values()].map(rs => {
+    const last = rs[rs.length - 1]; const a = aggregate(rs, cfg); const s = attendanceSummary(attBy.get(last.engineerId) || [], cfg);
+    return { id: last.engineerId, name: last.engineerName, teamId: last.teamId, contractId: last.contractId, a, s };
+  }).sort((x, y) => (y.a.targetPct ?? 0) - (x.a.targetPct ?? 0));
+}
+function render() {
+  const { perf, att, from, to } = data;
+  const a = aggregate(perf, cfg), s = attendanceSummary(att, cfg);
+  const engCount = new Set(perf.map(r => r.engineerId)).size;
+  const contracts = [...new Set(perf.map(r => r.contractId))].map(id => contractOf(id)).filter(Boolean);
+  const compT = contracts.length ? contracts.reduce((t, c) => t + c.completionTarget, 0) / contracts.length : null;
+  const abortT = contracts.length ? contracts.reduce((t, c) => t + c.abortRateMax, 0) / contracts.length : null;
+  $('#kpis').innerHTML = [
+    ['Meters installed', fmtNum(a.meters), `Target ${fmtNum(a.target, 0)} · ${fmtPct(a.targetPct, 0)}`, rag(a.targetPct, 100), a.targetPct],
+    ['Meters per engineer day', fmtNum(a.metersPerDay, 2), `${fmtNum(a.days)} engineer days · ${engCount} engineers`, ''],
+    ['Completion', fmtPct(a.completionPct), `${fmtNum(a.completed)} of ${fmtNum(a.booked)} jobs`, rag(a.completionPct, compT), a.completionPct],
+    ['Abort rate', fmtPct(a.abortPct), `${fmtNum(a.aborts)} aborts · ${fmtNum(a.noAccess)} no access`, rag(a.abortPct, abortT, { higher: false })],
+    ['Miles per meter', fmtNum(a.milesPerMeter, 1), `${fmtNum(a.miles)} miles`, ''],
+    ['Attendance', fmtPct(s.attendancePct), `${s.sickness} sick days · ${s.holiday} holiday`, rag(s.attendancePct, cfg.targets.attendanceTarget)],
+    ['Revenue (est.)', fmtMoney(a.revenue), 'Meters × revenue per meter', ''],
+  ].map(([l, v, sub, c, bar]) => `<div class="kpi ${c}"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div>${bar !== undefined ? `<div class="bar"><span style="width:${Math.min(100, bar || 0)}%"></span></div>` : ''}</div>`).join('');
+
+  const days = workingDaysBetween(from, to);
+  const daily = days.map(d => aggregate(perf.filter(r => r.date === d), cfg));
+  drawChart($('#trend'), { data: { labels: days.map(d => fmtDate(d, { day: '2-digit', month: 'short' })), datasets: [
+    { type: 'bar', label: 'Meters', data: daily.map(x => x.meters), backgroundColor: '#3d8fe0cc', borderRadius: 3, yAxisID: 'y' },
+    { type: 'line', label: 'Target', data: daily.map(x => Math.round(x.target * 10) / 10), borderColor: '#f3b440', borderDash: [5, 4], pointRadius: 0, yAxisID: 'y' },
+    { type: 'line', label: 'Completion %', data: daily.map(x => x.completionPct === null ? null : Math.round(x.completionPct)), borderColor: '#33c48a', tension: .3, pointRadius: 1, yAxisID: 'y2' },
+  ] }, options: { scales: { y: { beginAtZero: true }, y2: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { callback: v => v + '%' } } } } });
+
+  const head = `<th class="num">Eng. days</th><th class="num">Booked</th><th class="num">Completed</th><th class="num">Meters</th><th class="num">Target</th><th class="num">vs target</th><th class="num">Per day</th><th class="num">Completion</th><th class="num">Abort %</th><th class="num">Miles/meter</th><th class="num">Attendance</th>`;
+  const cells = (x, s2, c) => `<td class="num">${fmtNum(x.days)}</td><td class="num">${fmtNum(x.booked)}</td><td class="num">${fmtNum(x.completed)}</td><td class="num"><b>${fmtNum(x.meters)}</b></td><td class="num">${fmtNum(x.target, 0)}</td>
+    <td class="num cell-${rag(x.targetPct, 100)}">${fmtPct(x.targetPct, 0)}</td><td class="num">${fmtNum(x.metersPerDay, 2)}</td><td class="num cell-${rag(x.completionPct, c?.completionTarget)}">${fmtPct(x.completionPct, 0)}</td>
+    <td class="num cell-${rag(x.abortPct, c?.abortRateMax, { higher: false })}">${fmtPct(x.abortPct, 1)}</td><td class="num">${fmtNum(x.milesPerMeter, 1)}</td><td class="num cell-${rag(s2.attendancePct, cfg.targets.attendanceTarget)}">${fmtPct(s2.attendancePct, 0)}</td>`;
+  const byTeam = groupBy(perf, r => r.teamId || '');
+  $('#teamTbl').innerHTML = `<thead><tr><th>Team</th><th>Team leader</th><th>Contract</th>${head}</tr></thead><tbody>${[...byTeam].map(([tid, rs]) => {
+    const t = teamOf(tid); const c = contractOf(t?.contractId || rs[0].contractId);
+    return `<tr><td>${esc(t?.name || 'No team')}</td><td>${esc(t?.leader || '')}</td><td>${esc(c?.name || '')}</td>${cells(aggregate(rs, cfg), attendanceSummary(att.filter(x => (x.teamId || '') === tid), cfg), c)}</tr>`;
+  }).join('') || '<tr><td colspan="14" class="empty">No figures in this range.</td></tr>'}</tbody>`;
+  makeSortable($('#teamTbl'));
+
+  const rows = engRows().filter(e => !$('#onlyBelow').checked || (e.a.targetPct ?? 0) < 100);
+  $('#engTbl').innerHTML = `<thead><tr><th>#</th><th>Engineer</th><th>Team</th>${head}</tr></thead><tbody>${rows.map((e, i) =>
+    `<tr><td>${i + 1}</td><td>${esc(e.name)}</td><td>${esc(teamOf(e.teamId)?.name || '–')}</td>${cells(e.a, e.s, contractOf(e.contractId))}</tr>`).join('') || '<tr><td colspan="14" class="empty">No figures in this range.</td></tr>'}</tbody>`;
+  makeSortable($('#engTbl'));
+}
+$('#export').onclick = () => {
+  const { perf, from, to } = data;
+  const line = (x, s2) => ({ 'Engineer days': x.days, Booked: x.booked, Completed: x.completed, Meters: x.meters, Target: Math.round(x.target * 10) / 10, 'vs target %': x.targetPct === null ? '' : Math.round(x.targetPct), 'Completion %': x.completionPct === null ? '' : Math.round(x.completionPct * 10) / 10, 'Abort %': x.abortPct === null ? '' : Math.round(x.abortPct * 10) / 10, Miles: x.miles, 'Attendance %': s2?.attendancePct == null ? '' : Math.round(s2.attendancePct) });
+  exportXlsx(`performance-${from}-to-${to}`, {
+    'By engineer': engRows().map(e => ({ Engineer: e.name, Team: teamOf(e.teamId)?.name || '', Contract: contractOf(e.contractId)?.name || '', ...line(e.a, e.s) })),
+    'By team': [...groupBy(perf, r => r.teamId || '')].map(([tid, rs]) => ({ Team: teamOf(tid)?.name || 'No team', 'Team leader': teamOf(tid)?.leader || '', ...line(aggregate(rs, cfg), attendanceSummary(data.att.filter(x => (x.teamId || '') === tid), cfg)) })),
+    'Daily records': perf.sort((x, y) => x.date.localeCompare(y.date)).map(r => ({ Date: r.date, Engineer: r.engineerName, Team: teamOf(r.teamId)?.name || '', Contract: contractOf(r.contractId)?.name || '', Booked: r.jobsBooked, Completed: r.jobsCompleted, Meters: r.metersInstalled, Aborts: r.aborts, 'No access': r.noAccess, Miles: r.miles, Notes: r.notes || '' })),
+  });
+};
+load();
+</script>
+</body>
+</html>

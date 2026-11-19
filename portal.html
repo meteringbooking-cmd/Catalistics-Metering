@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engineer Portal</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  .notice { padding: 14px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line); margin-bottom: 10px; }
+  .notice.important { border-color: var(--bad); }
+  .notice h4 { margin: 0 0 4px; font-family: var(--display); font-size: 15.5px; }
+  .preview { background: var(--warn-soft); border: 1px solid var(--warn); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 14px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div id="previewBar"></div>
+  <div class="page-head"><div><h1 id="hello">My portal</h1><p id="sub"></p></div></div>
+  <div class="tabs" id="tabs"></div>
+  <div id="panel"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, db, collection, addDoc, serverTimestamp, where, $, $$, esc, el, options, fetchAll, fetchDoc, getEngineers, engineerOptions, aggregate, attendanceSummary,
+  contractOf, teamOf, codeChip, todayISO, addDays, monthStart, rag, fmtNum, fmtPct, fmtMoney, fmtDate, num, toast, stamp } from './assets/app.js';
+
+const ctx = await initPage({ roles: ['admin', 'manager', 'engineer'] }); const { cfg, profile, role } = ctx;
+let engineerId = profile.engineerId || '';
+let me = null, data = {};
+
+if (role !== 'engineer') {
+  const list = await getEngineers();
+  const bar = el(`<div class="preview"><b>Preview</b><span class="muted">See the portal exactly as an engineer sees it:</span><select id="as">${engineerOptions(list, engineerId || list[0]?.id, 'Choose engineer…')}</select></div>`);
+  $('#previewBar').append(bar);
+  engineerId = $('#as').value;
+  $('#as').onchange = () => { engineerId = $('#as').value; load(); };
+}
+
+const TABS = [['home', 'Overview'], ['days', 'My days'], ['bonus', 'Bonus'], ['claims', 'Claims'], ['notices', 'Notices'], ['docs', 'Documents'], ['quals', 'Qualifications']];
+$('#tabs').innerHTML = TABS.map(([k, l]) => `<button type="button" data-k="${k}">${l}<span class="badge bad" data-n="${k}" hidden style="margin-left:6px"></span></button>`).join('');
+$$('#tabs button').forEach(b => b.onclick = () => show(b.dataset.k));
+let current = 'home';
+
+async function load() {
+  if (!engineerId) { $('#panel').innerHTML = '<div class="card empty">This sign-in isn\'t linked to an engineer yet. Ask the office to link it on Users &amp; Access.</div>'; return; }
+  const mine = coll => fetchAll(coll, where('engineerId', '==', engineerId)).catch(e => { console.warn(coll, e); return []; });
+  const [perf, att, bonus, claims, quals, notices, docs] = await Promise.all([mine(C.dailyPerformance), mine(C.attendance), mine(C.bonusStatements), mine(C.additionalPayments), mine(C.qualifications),
+    fetchAll(C.notifications).catch(() => []), fetchAll(C.portalDocuments).catch(() => [])]);
+  const own = await fetchDoc(C.engineers, engineerId).catch(() => null);
+  me = own || { id: engineerId, name: perf[0]?.engineerName || att[0]?.engineerName || profile.name, teamId: perf.at(-1)?.teamId || att.at(-1)?.teamId, contractId: perf.at(-1)?.contractId };
+  const today = todayISO();
+  const vis = n => n.publishDate <= today && (!n.expiryDate || n.expiryDate >= today) &&
+    (n.audience === 'Everyone' || (n.audience === 'Team' && n.teamId === me.teamId) || (n.audience === 'Engineer' && n.engineerId === engineerId));
+  data = {
+    perf: perf.sort((a, b) => b.date.localeCompare(a.date)), att, bonus: bonus.sort((a, b) => String(b.to).localeCompare(String(a.to))),
+    claims: claims.sort((a, b) => b.date.localeCompare(a.date)), quals, notices: notices.filter(vis).sort((a, b) => b.publishDate.localeCompare(a.publishDate)),
+    docs: docs.filter(d => d.audience !== 'Team' || d.teamId === me.teamId),
+  };
+  $('#hello').textContent = role === 'engineer' ? `Hello, ${/\d/.test(me.name || '') ? me.name : String(me.name || '').split(' ')[0]}` : me.name;
+  $('#sub').textContent = [teamOf(me.teamId)?.name, teamOf(me.teamId)?.leader, contractOf(me.contractId)?.name].filter(Boolean).join(' · ');
+  const n = $('[data-n=notices]'); n.hidden = !data.notices.length; n.textContent = data.notices.length;
+  show(current);
+}
+
+function show(k) {
+  current = k; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.k === k));
+  const p = $('#panel'); const c = contractOf(me?.contractId) || {};
+  const today = todayISO();
+  if (k === 'home') {
+    const month = data.perf.filter(r => r.date >= monthStart(today));
+    const a = aggregate(month, cfg), s = attendanceSummary(data.att.filter(r => r.date >= monthStart(today)), cfg);
+    const last = data.perf[0];
+    p.innerHTML = `<h3>This month</h3><div class="grid" style="--min:170px;margin-bottom:20px">
+      <div class="kpi ${rag(a.metersPerDay, c.dailyMeterTarget)}"><div class="label">Meters per day</div><div class="value">${fmtNum(a.metersPerDay, 2)}</div><div class="sub">Target ${c.dailyMeterTarget ?? '–'}</div></div>
+      <div class="kpi"><div class="label">Meters installed</div><div class="value">${fmtNum(a.meters)}</div><div class="sub">${a.days} days worked</div></div>
+      <div class="kpi ${rag(a.completionPct, c.completionTarget)}"><div class="label">Completion</div><div class="value">${fmtPct(a.completionPct, 0)}</div><div class="sub">Target ${c.completionTarget ?? '–'}%</div></div>
+      <div class="kpi ${rag(s.attendancePct, cfg.targets.attendanceTarget)}"><div class="label">Attendance</div><div class="value">${fmtPct(s.attendancePct, 0)}</div><div class="sub">Target ${cfg.targets.attendanceTarget}%</div></div></div>
+      ${last ? `<div class="card"><h3>Your last working day · ${fmtDate(last.date)}</h3><div class="row" style="font-size:16px;gap:24px"><span><b>${fmtNum(last.metersInstalled)}</b> meters</span><span><b>${fmtNum(last.jobsCompleted)}</b> of ${fmtNum(last.jobsBooked)} jobs</span><span><b>${fmtNum(last.aborts)}</b> aborts</span></div></div>` : ''}
+      ${data.notices.slice(0, 2).map(noticeHtml).join('')}
+      ${data.bonus[0] ? `<div class="card"><h3>Latest bonus</h3><div style="font-size:26px;font-family:var(--display);font-weight:700">${fmtMoney(data.bonus[0].total, 2)}</div><div class="muted">${fmtDate(data.bonus[0].from)} – ${fmtDate(data.bonus[0].to)}</div></div>` : ''}`;
+  }
+  if (k === 'days') {
+    const attBy = new Map(data.att.map(r => [r.date, r.code]));
+    const dates = [...new Set([...data.perf.map(r => r.date), ...data.att.map(r => r.date)])].filter(d => d >= addDays(today, -45)).sort().reverse();
+    p.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Code</th><th class="num">Booked</th><th class="num">Completed</th><th class="num">Meters</th><th class="num">Aborts</th><th class="num">Miles</th></tr></thead><tbody>${dates.map(d => {
+      const r = data.perf.find(x => x.date === d) || {};
+      return `<tr><td>${fmtDate(d)}</td><td>${codeChip(attBy.get(d))}</td><td class="num">${fmtNum(r.jobsBooked)}</td><td class="num">${fmtNum(r.jobsCompleted)}</td><td class="num cell-${r.metersInstalled === undefined ? 'muted' : rag(r.metersInstalled, c.dailyMeterTarget)}"><b>${fmtNum(r.metersInstalled)}</b></td><td class="num">${fmtNum(r.aborts)}</td><td class="num">${fmtNum(r.miles)}</td></tr>`;
+    }).join('') || '<tr><td colspan="7" class="empty">Nothing recorded in the last six weeks.</td></tr>'}</tbody></table></div>`;
+  }
+  if (k === 'bonus') {
+    p.innerHTML = data.bonus.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Period</th><th class="num">Days</th><th class="num">Meters</th><th class="num">Above threshold</th><th class="num">Quality</th><th class="num">Deductions</th><th class="num">Bonus</th></tr></thead><tbody>${data.bonus.map(b =>
+      `<tr><td>${fmtDate(b.from)} – ${fmtDate(b.to)}</td><td class="num">${b.days}</td><td class="num">${fmtNum(b.meters)}</td><td class="num">${fmtNum(b.metersAboveThreshold)}</td><td class="num">×${b.multiplier}</td>
+      <td class="num" title="${esc(b.deductionReasons || '')}">${b.deductions ? fmtMoney(-b.deductions, 2) : '–'}</td><td class="num"><b>${b.qualifies === false ? '<span class="t-bad">Not qualified</span>' : fmtMoney(b.total, 2)}</b></td></tr>`).join('')}</tbody></table></div>`
+      : '<div class="card empty">No approved bonus statements yet.</div>';
+  }
+  if (k === 'claims') {
+    const types = cfg.lists.paymentTypes;
+    p.innerHTML = `<div class="card"><h2>Submit a claim</h2><form class="form-grid" id="claimForm" onsubmit="return false">
+      <label class="field">Date<input type="date" id="cDate" value="${today}" max="${today}"></label>
+      <label class="field">Type<select id="cType">${options(types.map(t => ({ value: t.name, label: `${t.name} (${fmtMoney(t.rate, 2)} per ${t.unit})` })))}</select></label>
+      <label class="field">Quantity<input type="number" id="cQty" value="1" min="0" step="any"></label>
+      <label class="field full">Notes<input id="cNotes" placeholder="What was it for? Job reference if there is one."></label>
+      <div class="full row"><button class="btn primary" id="cGo" type="button">Submit claim</button><span class="muted" id="cVal"></span></div></form></div>
+      <div class="card"><h3>My claims</h3><div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Type</th><th class="num">Qty</th><th class="num">Amount</th><th>Status</th><th>Office comment</th></tr></thead><tbody>${data.claims.map(x =>
+      `<tr><td>${fmtDate(x.date)}</td><td>${esc(x.type)}</td><td class="num">${fmtNum(x.quantity, 1)}</td><td class="num">${fmtMoney(x.amount, 2)}</td><td><span class="badge ${{ Approved: 'good', Rejected: 'bad' }[x.status] || 'warn'}">${esc(x.status || 'Pending')}</span></td><td>${esc(x.decisionNote || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">No claims yet.</td></tr>'}</tbody></table></div></div>`;
+    const val = () => { const t = types.find(x => x.name === $('#cType').value); $('#cVal').textContent = t ? `Worth ${fmtMoney(num($('#cQty').value) * num(t.rate), 2)}` : ''; };
+    $('#cType').onchange = val; $('#cQty').oninput = val; val();
+    $('#cGo').onclick = async () => {
+      const t = types.find(x => x.name === $('#cType').value);
+      if (!(num($('#cQty').value) > 0)) { toast('Enter a quantity', 'warn'); return; }
+      $('#cGo').disabled = true;
+      try {
+        await addDoc(collection(db, C.additionalPayments), { date: $('#cDate').value, engineerId, engineerName: me.name, teamId: me.teamId || '', contractId: me.contractId || '',
+          type: t.name, quantity: num($('#cQty').value), rate: num(t.rate), amount: Math.round(num($('#cQty').value) * num(t.rate) * 100) / 100, notes: $('#cNotes').value.trim(),
+          status: 'Pending', source: 'Portal', createdAt: serverTimestamp(), createdBy: ctx.user.email, ...stamp() });
+        toast('Claim submitted', 'good'); await load();
+      } catch (e) { toast(e.message, 'bad'); $('#cGo').disabled = false; }
+    };
+  }
+  if (k === 'notices') p.innerHTML = data.notices.map(noticeHtml).join('') || '<div class="card empty">No notices right now.</div>';
+  if (k === 'docs') {
+    const cats = [...new Set(data.docs.map(d => d.category))];
+    p.innerHTML = cats.map(cat => `<div class="card"><h3>${esc(cat)}</h3><ul class="list-plain">${data.docs.filter(d => d.category === cat).map(d => `<li><a href="${esc(d.url)}" target="_blank" rel="noopener"><b>${esc(d.title)}</b></a><div class="faint" style="font-size:12.5px">${esc(d.description || '')}</div></li>`).join('')}</ul></div>`).join('') || '<div class="card empty">No documents have been shared yet.</div>';
+  }
+  if (k === 'quals') {
+    const warn = addDays(today, cfg.targets.qualificationWarnDays), map = new Map(data.quals.map(q => [q.qualification, q]));
+    p.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Qualification</th><th>Achieved</th><th>Expires</th><th>Status</th></tr></thead><tbody>${cfg.lists.qualifications.map(q => {
+      const r = map.get(q); const st = !r ? ['', 'Not held'] : !r.expiryDate ? ['good', 'In date'] : r.expiryDate < today ? ['bad', 'Expired'] : r.expiryDate <= warn ? ['warn', 'Renew soon'] : ['good', 'In date'];
+      return `<tr><td>${esc(q)}</td><td>${fmtDate(r?.achievedDate)}</td><td>${r ? (r.expiryDate ? fmtDate(r.expiryDate) : 'No expiry') : '–'}</td><td><span class="badge ${st[0]}">${st[1]}</span></td></tr>`;
+    }).join('')}</tbody></table></div>`;
+  }
+}
+const noticeHtml = n => `<div class="notice ${n.priority === 'Important' ? 'important' : ''}"><h4>${n.priority === 'Important' ? '⚠️ ' : ''}${esc(n.title)}</h4><div style="white-space:pre-wrap">${esc(n.message)}</div><div class="faint" style="font-size:12px;margin-top:6px">${fmtDate(n.publishDate)}</div></div>`;
+load();
+</script>
+</body>
+</html>

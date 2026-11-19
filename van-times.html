@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Van Times</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Van Times</h1><p>First engine start and last stop each day, from vehicle tracking or typed in. Late starts, early finishes, after-hours driving and long days are flagged using the times set on Targets &amp; KPIs.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const F = cfg.fleet;
+const mins = t => { if (!t) return null; const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
+const flags = r => {
+  const out = [];
+  if (r.firstStart && r.firstStart > F.lateStartAfter) out.push('Late start');
+  if (r.lastEnd && r.lastEnd < F.earlyFinishBefore) out.push('Early finish');
+  if (r.lastEnd && r.lastEnd > F.afterHoursAfter) out.push('After hours');
+  const len = mins(r.lastEnd) - mins(r.firstStart);
+  if (r.firstStart && r.lastEnd && len > F.longDayHours * 60) out.push('Long day');
+  return out;
+};
+const len = r => r.firstStart && r.lastEnd ? (mins(r.lastEnd) - mins(r.firstStart)) / 60 : null;
+await logbook($('#book'), {
+  collection: C.vanJourneys, dateField: 'date', defaultDays: 14, addLabel: 'Add day', sheetName: 'Van times',
+  intro: 'Import a tracking export with columns <b>Date, Engineer, First start, Last end, Miles</b> using Import.',
+  fields: [
+    { key: 'date', label: 'Date', type: 'date', required: true, default: () => todayISO() },
+    ...engineerFields(),
+    { key: 'firstStart', label: 'First start', type: 'time', required: true },
+    { key: 'lastEnd', label: 'Last end', type: 'time', required: true },
+    { key: 'miles', label: 'Miles', type: 'number' },
+    { key: 'hours', label: 'Day length', type: 'number', compute: r => len(r), format: v => v === null ? '–' : `${Math.floor(v)}h ${String(Math.round((v % 1) * 60)).padStart(2, '0')}m` },
+    { key: 'flags', label: 'Flags', type: 'text', compute: r => flags(r).join(', '), format: (v, r) => flags(r).map(f => `<span class="badge ${f === 'Long day' || f === 'After hours' ? 'warn' : 'bad'}">${f}</span>`).join(' ') || '<span class="t-good">✓</span>' },
+    { key: 'explanation', label: 'Explanation', type: 'text', list: false },
+  ],
+  beforeSave: d => {
+    const pad = t => { const m = String(t || '').match(/(\d{1,2})[:.](\d{2})/); return m ? `${m[1].padStart(2, '0')}:${m[2]}` : ''; };
+    return { ...d, firstStart: pad(d.firstStart), lastEnd: pad(d.lastEnd) };
+  },
+  rowClass: r => flags(r).length ? 'row-warn' : '',
+  summary: (rows, el) => {
+    const by = [...groupBy(rows, r => r.engineerId)].map(([id, rs]) => ({ name: rs[0].engineerName, team: rs[0].teamId, days: rs.length,
+      late: rs.filter(r => flags(r).includes('Late start')).length, early: rs.filter(r => flags(r).includes('Early finish')).length,
+      after: rs.filter(r => flags(r).includes('After hours')).length, avg: rs.reduce((t, r) => t + (len(r) || 0), 0) / rs.length })).sort((a, b) => (b.late + b.early) - (a.late + a.early));
+    el.innerHTML = `<div class="card" style="margin-bottom:14px"><div class="card-head"><h3>By engineer (records shown)</h3><span class="help">Late after ${F.lateStartAfter} · early before ${F.earlyFinishBefore} · after hours past ${F.afterHoursAfter}</span></div>
+      <div class="table-wrap" style="--max-h:300px"><table class="table"><thead><tr><th>Engineer</th><th>Team</th><th class="num">Days</th><th class="num">Avg day</th><th class="num">Late starts</th><th class="num">Early finishes</th><th class="num">After hours</th></tr></thead><tbody>
+      ${by.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(teamOf(x.team)?.name || '–')}</td><td class="num">${x.days}</td><td class="num">${fmtNum(x.avg, 1)}h</td><td class="num ${x.late ? 'cell-bad' : ''}">${x.late}</td><td class="num ${x.early ? 'cell-bad' : ''}">${x.early}</td><td class="num ${x.after ? 'cell-warn' : ''}">${x.after}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No records.</td></tr>'}</tbody></table></div></div>`;
+  },
+}, ctx);
+</script>
+</body>
+</html>

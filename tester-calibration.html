@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tester Calibration</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Tester Calibration</h1><p>Test equipment held by each engineer and when it is next due for calibration. The interval and warning period are set on Targets &amp; KPIs.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const today = todayISO(), months = cfg.targets.calibrationIntervalMonths, warn = addDays(today, cfg.targets.qualificationWarnDays);
+const due = r => r.calibrationDate ? addMonths(r.calibrationDate, months) : '';
+await logbook($('#book'), {
+  collection: C.testerCalibrations, addLabel: 'Add tester', sheetName: 'Testers',
+  fields: [
+    ...engineerFields(),
+    { key: 'make', label: 'Make & model', type: 'text', required: true },
+    { key: 'serial', label: 'Serial number', type: 'text', required: true },
+    { key: 'calibrationDate', label: 'Last calibrated', type: 'date', required: true },
+    { key: 'dueDate', label: 'Next due', type: 'date', compute: r => due(r) },
+    { key: 'state', label: 'State', type: 'text', compute: r => !due(r) ? '' : due(r) < today ? 'Overdue' : due(r) <= warn ? 'Due soon' : 'In date',
+      format: v => `<span class="badge ${v === 'Overdue' ? 'bad' : v === 'Due soon' ? 'warn' : 'good'}">${esc(v)}</span>` },
+    { key: 'certificateRef', label: 'Certificate ref', type: 'text', list: false },
+  ],
+  rowClass: r => due(r) < today ? 'row-bad' : due(r) <= warn ? 'row-warn' : '',
+  summary: (rows, el) => {
+    const o = rows.filter(r => due(r) && due(r) < today).length, s = rows.filter(r => due(r) >= today && due(r) <= warn).length;
+    el.innerHTML = `<div class="grid" style="--min:180px;margin-bottom:14px"><div class="kpi"><div class="label">Testers</div><div class="value">${rows.length}</div></div>
+      <div class="kpi ${o ? 'bad' : 'good'}"><div class="label">Overdue</div><div class="value">${o}</div></div><div class="kpi ${s ? 'warn' : 'good'}"><div class="label">Due soon</div><div class="value">${s}</div></div></div>`;
+  },
+}, ctx);
+</script>
+</body>
+</html>

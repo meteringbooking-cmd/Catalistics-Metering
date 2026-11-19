@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head">
+    <div>
+      <h1 id="greeting">Welcome</h1>
+      <p id="sub"></p>
+    </div>
+    <a class="btn primary" href="work-screen.html">📺 Open Work Screen</a>
+  </div>
+  <h3>Last working day</h3>
+  <div class="grid" id="kpis" style="--min:200px;margin-bottom:26px"></div>
+  <div id="cats" class="stack"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, PAGES, CATEGORIES, C, $, esc, fetchRange, prevWorkingDay, aggregate, attendanceSummary,
+  fmtNum, fmtPct, fmtDateLong, rag, activeContracts } from './assets/app.js';
+
+const ctx = await initPage();
+const { cfg, profile, role } = ctx;
+const hour = new Date().getHours();
+$('#greeting').textContent = `Good ${hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'}, ${profile.name?.split(' ')[0] || 'there'}`;
+$('#sub').textContent = `${cfg.company.clientName} · ${cfg.company.tagline}`;
+
+const day = prevWorkingDay();
+try {
+  const [perf, att] = await Promise.all([fetchRange(C.dailyPerformance, day, day), fetchRange(C.attendance, day, day)]);
+  const tiles = [];
+  for (const c of activeContracts(cfg)) {
+    const a = aggregate(perf.filter(r => r.contractId === c.id), cfg);
+    const cls = rag(a.targetPct, 100);
+    tiles.push(`<a class="kpi ${cls}" href="daily-performance.html" style="color:inherit;text-decoration:none">
+      <div class="label">${esc(c.name)} · meters</div><div class="value">${fmtNum(a.meters)}</div>
+      <div class="sub">Target ${fmtNum(a.target, 1)} · ${fmtPct(a.targetPct, 0)}</div><div class="bar"><span style="width:${Math.min(100, a.targetPct || 0)}%"></span></div></a>`);
+  }
+  const all = aggregate(perf, cfg);
+  const s = attendanceSummary(att, cfg);
+  const acs = activeContracts(cfg);
+  const compTarget = acs.length ? acs.reduce((t, c) => t + Number(c.completionTarget || 0), 0) / acs.length : 0;
+  tiles.push(`<div class="kpi ${rag(all.completionPct, compTarget)}"><div class="label">Completion</div><div class="value">${fmtPct(all.completionPct)}</div><div class="sub">${fmtNum(all.completed)} of ${fmtNum(all.booked)} jobs · target ${fmtNum(compTarget, 0)}%</div></div>`);
+  tiles.push(`<div class="kpi ${rag(s.attendancePct, cfg.targets.attendanceTarget)}"><div class="label">Attendance</div><div class="value">${fmtPct(s.attendancePct)}</div><div class="sub">Target ${cfg.targets.attendanceTarget}% · ${fmtDateLong(day)}</div></div>`);
+  $('#kpis').innerHTML = tiles.join('');
+  if (!perf.length) $('#kpis').insertAdjacentHTML('beforeend', `<div class="kpi"><div class="label">No figures yet</div><div class="sub">Nothing has been submitted for ${fmtDateLong(day)}. <a href="submit-performance.html">Submit performance</a>${role === 'admin' ? ' or <a href="demo-data.html">load demo data</a>' : ''}.</div></div>`);
+} catch (e) { $('#kpis').innerHTML = `<div class="kpi"><div class="sub">Could not load figures: ${esc(e.message)}</div></div>`; }
+
+const allowed = PAGES.filter(p => p.roles.includes(role));
+$('#cats').innerHTML = CATEGORIES.map(([id, label, desc]) => {
+  const pages = allowed.filter(p => p.cat === id);
+  if (!pages.length) return '';
+  return `<section><div class="card-head"><div><h2 style="margin:0">${esc(label)}</h2><div class="muted">${esc(desc)}</div></div></div>
+    <div class="grid" style="--min:240px">${pages.map(p => `<a class="tile" href="${p.file}"><span class="t-ico">${p.icon}</span><span class="t-name">${esc(p.name)}</span><span class="t-desc">${esc(p.desc)}</span></a>`).join('')}</div></section>`;
+}).join('');
+</script>
+</body>
+</html>

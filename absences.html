@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Absences</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Absences</h1><p id="explain"></p></div></div>
+  <div class="grid" style="--min:420px;margin-bottom:16px">
+    <div class="card"><div class="card-head"><h3>Triggers reached</h3><span class="badge" id="trigCount"></span></div><div class="table-wrap" style="--max-h:320px"><table class="table" id="trig"></table></div></div>
+    <div class="card"><div class="card-head"><h3>Days lost per month</h3></div><div class="chart-box" style="--h:300px"><canvas id="trend"></canvas></div></div>
+  </div>
+  <div class="card"><div class="card-head"><h2 style="margin:0">Absence records</h2></div><div id="book"></div></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, fetchRange, todayISO, addMonths, workingDaysBetween, groupBy, num, fmtNum, fmtDate, teamOf, drawChart, PALETTE } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx; const A = cfg.absence;
+$('#explain').textContent = `Bradford Factor = spells² × total days, over the last ${A.lookbackMonths} months. Anyone at ${A.bradfordTrigger}+ or with ${A.occurrenceTrigger}+ spells is flagged. Triggers are set on Targets & KPIs.`;
+
+async function summary() {
+  const from = addMonths(todayISO(), -Math.max(A.lookbackMonths, 12));
+  const all = await fetchRange(C.absences, from, todayISO(), 'startDate');
+  const look = all.filter(r => r.startDate >= addMonths(todayISO(), -A.lookbackMonths));
+  const rows = [...groupBy(look, r => r.engineerId).values()].map(rs => {
+    const spells = rs.length, days = rs.reduce((t, r) => t + num(r.days), 0);
+    return { name: rs[0].engineerName, teamId: rs[0].teamId, spells, days, bf: spells * spells * days, last: rs.map(r => r.startDate).sort().pop() };
+  }).filter(x => x.bf >= A.bradfordTrigger || x.spells >= A.occurrenceTrigger).sort((a, b) => b.bf - a.bf);
+  $('#trigCount').className = 'badge ' + (rows.length ? 'bad' : 'good'); $('#trigCount').textContent = rows.length;
+  $('#trig').innerHTML = `<thead><tr><th>Engineer</th><th>Team</th><th class="num">Spells</th><th class="num">Days</th><th class="num">Bradford</th><th>Last absence</th></tr></thead><tbody>${rows.map(x =>
+    `<tr><td>${esc(x.name)}</td><td>${esc(teamOf(x.teamId)?.name || '–')}</td><td class="num ${x.spells >= A.occurrenceTrigger ? 'cell-bad' : ''}">${x.spells}</td><td class="num">${fmtNum(x.days, 1)}</td>
+     <td class="num ${x.bf >= A.bradfordTrigger ? 'cell-bad' : ''}"><b>${fmtNum(x.bf)}</b></td><td>${fmtDate(x.last)}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Nobody has reached a trigger.</td></tr>'}</tbody>`;
+  const months = Array.from({ length: 12 }, (_, i) => addMonths(todayISO(), i - 11).slice(0, 7));
+  const types = cfg.lists.absenceTypes;
+  drawChart($('#trend'), { type: 'bar', data: { labels: months.map(m => new Date(m + '-01').toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })),
+    datasets: types.map((t, i) => ({ label: t, data: months.map(m => all.filter(r => r.type === t && String(r.startDate).startsWith(m)).reduce((s, r) => s + num(r.days), 0)), backgroundColor: PALETTE[(i + 4) % PALETTE.length] + 'cc' })) },
+    options: { scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } } });
+}
+await summary();
+
+await logbook($('#book'), {
+  collection: C.absences, dateField: 'startDate', defaultDays: 365, addLabel: 'Add absence', sheetName: 'Absences',
+  fields: [
+    ...engineerFields(),
+    { key: 'type', label: 'Type', type: 'select', options: c => c.lists.absenceTypes, required: true, filter: true },
+    { key: 'startDate', label: 'First day', type: 'date', required: true, default: () => todayISO() },
+    { key: 'endDate', label: 'Last day', type: 'date', help: 'Leave blank if they are still off.' },
+    { key: 'days', label: 'Working days', type: 'number', dp: 1, help: 'Worked out from the dates if left blank.' },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    { key: 'fitNote', label: 'Fit note received', type: 'checkbox' },
+    { key: 'returnToWork', label: 'Return-to-work done', type: 'checkbox' },
+    { key: 'notes', label: 'Notes', type: 'textarea', list: false },
+  ],
+  beforeSave: d => {
+    if ((d.days === '' || d.days === undefined) && d.startDate) d.days = workingDaysBetween(d.startDate, d.endDate || todayISO()).length;
+    return d;
+  },
+  rowClass: r => !r.endDate ? 'row-warn' : (!r.returnToWork ? 'row-bad' : ''),
+  afterSave: summary,
+}, ctx);
+</script>
+</body>
+</html>

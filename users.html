@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Users &amp; Access</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head">
+    <div><h1>Users &amp; Access</h1>
+      <p>Create sign-ins and choose each person's role. <b>Admin</b> can change settings and users. <b>Manager</b> covers office staff and team leaders and can use every operational page. <b>Engineer</b> only sees their own portal.</p></div>
+    <button class="btn primary" id="add" type="button">+ New user</button>
+  </div>
+  <div class="table-wrap"><table class="table" id="tbl"></table></div>
+  <p class="help" style="margin-top:10px">Removing access stops someone using the system straight away. To delete the sign-in itself, use Firebase console → Authentication.</p>
+</main>
+</div>
+<script type="module">
+import { initPage, C, db, doc, setDoc, serverTimestamp, $, $$, esc, el, options, toast, modal, fetchAll, getEngineers, engineerOptions, makeSortable } from './assets/app.js';
+import { firebaseConfig } from './assets/firebase-config.js';
+import { initializeApp, getApps } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+
+const ctx = await initPage({ roles: ['admin'] });
+// A second Firebase app instance creates accounts without signing the admin out.
+const second = getApps().find(a => a.name === 'user-admin') || initializeApp(firebaseConfig, 'user-admin');
+const secondAuth = getAuth(second);
+const engineers = await getEngineers({ includeLeavers: true });
+const ROLES = [{ value: 'admin', label: 'Admin' }, { value: 'manager', label: 'Manager' }, { value: 'engineer', label: 'Engineer' }];
+
+async function load() {
+  const users = (await fetchAll(C.users)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  $('#tbl').innerHTML = `<thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Linked engineer</th><th>Status</th><th data-nosort></th></tr></thead>
+  <tbody>${users.map(u => `<tr data-id="${u.id}"><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td><span class="badge info">${esc(u.role)}</span></td>
+    <td>${esc(engineers.find(e => e.id === u.engineerId)?.name || '–')}</td>
+    <td>${u.active === false ? '<span class="badge bad">No access</span>' : '<span class="badge good">Active</span>'}</td>
+    <td class="actions"><button class="btn sm ghost" data-reset>Send password reset</button> <button class="btn sm" data-edit>Edit</button></td></tr>`).join('')}</tbody>`;
+  makeSortable($('#tbl'));
+  $$('[data-edit]').forEach(b => b.onclick = () => edit(users.find(u => u.id === b.closest('tr').dataset.id)));
+  $$('[data-reset]').forEach(b => b.onclick = async () => {
+    const u = users.find(x => x.id === b.closest('tr').dataset.id);
+    try { await sendPasswordResetEmail(secondAuth, u.email); toast(`Reset email sent to ${u.email}`, 'good'); } catch (e) { toast(e.message, 'bad'); }
+  });
+}
+
+function form(u = {}) {
+  return el(`<form class="form-grid" onsubmit="return false">
+    <label class="field">Name<input id="uName" value="${esc(u.name)}" required></label>
+    <label class="field">Email<input id="uEmail" type="email" value="${esc(u.email)}" ${u.id ? 'disabled' : ''} required></label>
+    ${u.id ? '' : '<label class="field">Temporary password<input id="uPass" type="text" minlength="8" required><span class="help">At least 8 characters. They can change it with “Forgot password”.</span></label>'}
+    <label class="field">Role<select id="uRole">${options(ROLES, u.role || 'manager')}</select></label>
+    <label class="field">Linked engineer<select id="uEng">${engineerOptions(engineers, u.engineerId, 'None')}</select><span class="help">Required for the Engineer role — it decides whose figures they see.</span></label>
+    <label class="field inline"><input type="checkbox" id="uActive" ${u.active !== false ? 'checked' : ''}> Has access</label>
+  </form>`);
+}
+function readForm(f) {
+  const role = $('#uRole', f).value, engineerId = $('#uEng', f).value;
+  if (role === 'engineer' && !engineerId) throw new Error('Choose the engineer this sign-in belongs to.');
+  return { name: $('#uName', f).value.trim(), role, engineerId, active: $('#uActive', f).checked };
+}
+function edit(u) {
+  const f = form(u);
+  modal({ title: `Edit ${u.name}`, body: f, actions: [{ label: 'Cancel', kind: 'ghost' }, { label: 'Save', kind: 'primary', onClick: async () => {
+    await setDoc(doc(db, C.users, u.id), { ...readForm(f), updatedAt: serverTimestamp() }, { merge: true }); toast('Saved', 'good'); load();
+  } }] });
+}
+$('#add').onclick = () => {
+  const f = form();
+  modal({ title: 'New user', body: f, actions: [{ label: 'Cancel', kind: 'ghost' }, { label: 'Create user', kind: 'primary', onClick: async () => {
+    const data = readForm(f); const email = $('#uEmail', f).value.trim(); const pass = $('#uPass', f).value;
+    if (!email || pass.length < 8) { toast('Enter an email and a password of 8+ characters', 'warn'); return false; }
+    const cred = await createUserWithEmailAndPassword(secondAuth, email, pass);
+    await signOut(secondAuth);
+    await setDoc(doc(db, C.users, cred.user.uid), { ...data, email, createdAt: serverTimestamp() });
+    if (data.engineerId) await setDoc(doc(db, C.engineers, data.engineerId), { email }, { merge: true });
+    toast(`Created ${email}`, 'good'); load();
+  } }] });
+};
+load();
+</script>
+</body>
+</html>

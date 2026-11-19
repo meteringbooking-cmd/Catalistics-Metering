@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bonus Calculator</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Bonus Calculator</h1><p id="rule"></p></div></div>
+  <div class="tabs"><button class="on" data-t="calc" type="button">Calculation</button><button data-t="ded" type="button">Deductions</button></div>
+  <section id="calcView">
+    <div class="toolbar">
+      <label class="field">Period<select id="ptype"><option value="week">Week</option><option value="month">Month</option><option value="custom">Custom</option></select></label>
+      <label class="field">From<input type="date" id="from"></label><label class="field">To<input type="date" id="to"></label>
+      <label class="field">Contract<span id="cWrap"></span></label>
+      <div class="spacer"></div>
+      <button class="btn" id="payroll" type="button">⬇ Payroll export</button>
+      <button class="btn primary" id="approveAll" type="button">Approve all &amp; publish</button>
+    </div>
+    <div class="grid" id="kpis" style="--min:180px;margin-bottom:16px"></div>
+    <div class="table-wrap" style="--max-h:70vh"><table class="table" id="tbl"></table></div>
+  </section>
+  <section id="dedView" hidden></section>
+</main>
+</div>
+<script type="module">
+import { initPage, C, db, doc, $, $$, esc, fetchRange, aggregate, groupBy, num, fmtNum, fmtPct, fmtMoney, fmtDate, todayISO, addDays, weekStart, monthStart, monthEnd,
+  contractSelect, teamOf, stamp, commitInBatches, toast, confirmBox, exportXlsx, makeSortable } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx; const B = cfg.bonus;
+$('#rule').innerHTML = `Bonus = (meters above <b>${B.thresholdMetersPerDay}</b> a day × <b>${fmtMoney(B.ratePerMeter, 2)}</b>${B.ratePerCompletedJob ? ` + completed jobs × <b>${fmtMoney(B.ratePerCompletedJob, 2)}</b>` : ''}) × quality multiplier − deductions. Completion must be at least <b>${B.minCompletionPct}%</b>. Approving publishes the statement to each engineer's portal.`;
+$('#cWrap').innerHTML = contractSelect('contract');
+let lines = [], period = {};
+
+function setPeriod() {
+  const t = $('#ptype').value, base = $('#from').value || todayISO();
+  if (t === 'week') { const s = weekStart(base); $('#from').value = s; $('#to').value = addDays(s, 6); }
+  if (t === 'month') { $('#from').value = monthStart(base); $('#to').value = monthEnd(base); }
+}
+$('#from').value = addDays(weekStart(todayISO()), -7); setPeriod();
+$('#ptype').onchange = () => { setPeriod(); load(); };
+$('#from').onchange = () => { setPeriod(); load(); }; $('#to').onchange = load; $('#contract').onchange = load;
+
+function multiplierFor(passPct) {
+  if (passPct === null) return { m: 1, note: 'no audits' };
+  const band = [...B.qualityBands].sort((a, b) => b.min - a.min).find(b => passPct >= b.min);
+  return { m: band ? Number(band.multiplier) : 1, note: fmtPct(passPct, 0) + ' pass' };
+}
+
+async function load() {
+  const from = $('#from').value, to = $('#to').value, cid = $('#contract').value;
+  period = { from, to, key: `${from}_${to}` };
+  const [perf, audits, adj, statements] = await Promise.all([fetchRange(C.dailyPerformance, from, to), fetchRange(C.complianceAudits, from, to), fetchRange(C.bonusAdjustments, from, to), fetchRange(C.bonusStatements, period.key, period.key, 'periodKey')]);
+  const st = new Map(statements.map(s => [s.engineerId, s]));
+  const audBy = groupBy(audits, r => r.engineerId), adjBy = groupBy(adj, r => r.engineerId);
+  lines = [...groupBy(perf.filter(r => !cid || r.contractId === cid), r => r.engineerId).values()].map(rs => {
+    const last = rs[rs.length - 1], a = aggregate(rs, cfg);
+    const excess = rs.reduce((t, r) => t + Math.max(0, num(r.metersInstalled) - num(B.thresholdMetersPerDay)), 0);
+    const base = excess * num(B.ratePerMeter) + a.completed * num(B.ratePerCompletedJob);
+    const au = audBy.get(last.engineerId) || [];
+    const pass = au.length ? au.filter(x => x.result === 'Pass').length / au.length * 100 : null;
+    const q = multiplierFor(pass);
+    const ds = adjBy.get(last.engineerId) || [];
+    const dedPct = ds.reduce((t, d) => t + num(d.percent), 0), dedAmt = ds.reduce((t, d) => t + num(d.amount), 0);
+    const qualifies = a.completionPct === null || a.completionPct >= num(B.minCompletionPct);
+    const afterQ = base * q.m;
+    const deductions = afterQ * dedPct / 100 + dedAmt;
+    const total = qualifies ? Math.max(0, afterQ - deductions) : 0;
+    return { engineerId: last.engineerId, engineerName: last.engineerName, teamId: last.teamId, contractId: last.contractId,
+      days: a.days, meters: a.meters, completed: a.completed, booked: a.booked, completionPct: a.completionPct, excess, base, passPct: pass, multiplier: q.m, qNote: q.note,
+      deductions, deductionReasons: ds.map(d => d.type).join(', '), qualifies, total: Math.round(total * 100) / 100, statement: st.get(last.engineerId) };
+  }).sort((a, b) => b.total - a.total);
+  draw();
+}
+function draw() {
+  const tot = lines.reduce((t, l) => t + l.total, 0);
+  const approved = lines.filter(l => l.statement?.status === 'Approved');
+  $('#kpis').innerHTML = [['Total bonus', fmtMoney(tot, 2), `${lines.filter(l => l.total > 0).length} engineers earning`], ['Average per engineer', fmtMoney(lines.length ? tot / lines.length : 0, 2), `${lines.length} engineers worked`],
+    ['Not qualifying', fmtNum(lines.filter(l => !l.qualifies).length), `Completion below ${B.minCompletionPct}%`], ['Approved', `${approved.length} / ${lines.length}`, `${fmtDate(period.from)} – ${fmtDate(period.to)}`]]
+    .map(([l, v, s]) => `<div class="kpi"><div class="label">${l}</div><div class="value" style="font-size:26px">${v}</div><div class="sub">${s}</div></div>`).join('');
+  $('#tbl').innerHTML = `<thead><tr><th>Engineer</th><th>Team</th><th class="num">Days</th><th class="num">Meters</th><th class="num">Above threshold</th><th class="num">Completion</th><th class="num">Base</th><th class="num">Quality</th><th class="num">Deductions</th><th class="num">Bonus</th><th>Status</th><th data-nosort></th></tr></thead>
+  <tbody>${lines.map(l => {
+    const changed = l.statement && Math.abs(num(l.statement.total) - l.total) > 0.005;
+    return `<tr data-id="${esc(l.engineerId)}" class="${l.qualifies ? '' : 'row-bad'}"><td>${esc(l.engineerName)}</td><td>${esc(teamOf(l.teamId)?.name || '–')}</td><td class="num">${l.days}</td><td class="num">${fmtNum(l.meters)}</td><td class="num">${fmtNum(l.excess)}</td>
+    <td class="num ${l.qualifies ? '' : 'cell-bad'}">${fmtPct(l.completionPct, 0)}</td><td class="num">${fmtMoney(l.base, 2)}</td><td class="num">×${l.multiplier} <span class="faint">(${esc(l.qNote)})</span></td>
+    <td class="num" title="${esc(l.deductionReasons)}">${l.deductions ? fmtMoney(-l.deductions, 2) : '–'}</td><td class="num"><b>${fmtMoney(l.total, 2)}</b></td>
+    <td>${l.statement ? `<span class="badge ${changed ? 'warn' : 'good'}">${changed ? 'Changed since approval' : 'Approved'}</span>` : '<span class="badge">Draft</span>'}</td>
+    <td class="actions"><button class="btn sm" data-approve>${l.statement ? 'Re-approve' : 'Approve'}</button></td></tr>`;
+  }).join('') || '<tr><td colspan="12" class="empty">No performance figures in this period.</td></tr>'}</tbody>`;
+  makeSortable($('#tbl'));
+  $$('[data-approve]').forEach(b => b.onclick = () => approve(lines.filter(l => l.engineerId === b.closest('tr').dataset.id)));
+}
+async function approve(list) {
+  await commitInBatches(list.map(l => ({ type: 'set', ref: doc(db, C.bonusStatements, `${period.key}_${l.engineerId}`), data: stamp({
+    periodKey: period.key, from: period.from, to: period.to, engineerId: l.engineerId, engineerName: l.engineerName, teamId: l.teamId || '', contractId: l.contractId || '',
+    days: l.days, meters: l.meters, completed: l.completed, completionPct: l.completionPct, metersAboveThreshold: l.excess, base: Math.round(l.base * 100) / 100,
+    multiplier: l.multiplier, passPct: l.passPct, deductions: Math.round(l.deductions * 100) / 100, deductionReasons: l.deductionReasons, qualifies: l.qualifies, total: l.total,
+    status: 'Approved', approvedBy: ctx.user.email }) })));
+  toast(`Approved ${list.length} statement(s)`, 'good'); load();
+}
+$('#approveAll').onclick = async () => { if (!lines.length) return; if (await confirmBox(`Approve and publish ${lines.length} bonus statement(s) for ${fmtDate(period.from)} – ${fmtDate(period.to)}?`, { okLabel: 'Approve all' })) approve(lines); };
+$('#payroll').onclick = async () => {
+  const claims = (await fetchRange(C.additionalPayments, period.from, period.to)).filter(c => c.status === 'Approved');
+  const byEng = new Map();
+  for (const l of lines) byEng.set(l.engineerId, { Engineer: l.engineerName, Team: teamOf(l.teamId)?.name || '', Bonus: l.total, 'Additional payments': 0, Total: l.total });
+  for (const c of claims) { const r = byEng.get(c.engineerId) || { Engineer: c.engineerName, Team: teamOf(c.teamId)?.name || '', Bonus: 0, 'Additional payments': 0, Total: 0 }; r['Additional payments'] += num(c.amount); r.Total += num(c.amount); byEng.set(c.engineerId, r); }
+  await exportXlsx(`payroll-${period.from}-to-${period.to}`, {
+    Summary: [...byEng.values()].map(r => ({ ...r, Bonus: Math.round(r.Bonus * 100) / 100, Total: Math.round(r.Total * 100) / 100 })),
+    'Bonus detail': lines.map(l => ({ Engineer: l.engineerName, Days: l.days, Meters: l.meters, 'Meters above threshold': l.excess, 'Completion %': l.completionPct === null ? '' : Math.round(l.completionPct), Base: Math.round(l.base * 100) / 100, Multiplier: l.multiplier, Deductions: Math.round(l.deductions * 100) / 100, 'Deduction reasons': l.deductionReasons, Bonus: l.total, Status: l.statement ? 'Approved' : 'Draft' })),
+    'Additional payments': claims.map(c => ({ Date: c.date, Engineer: c.engineerName, Type: c.type, Quantity: c.quantity, Rate: c.rate, Amount: c.amount, Notes: c.notes || '' })),
+  });
+};
+
+let dedLoaded = false;
+$$('.tabs button').forEach(b => b.onclick = async () => {
+  $$('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  $('#calcView').hidden = b.dataset.t !== 'calc'; $('#dedView').hidden = b.dataset.t !== 'ded';
+  if (b.dataset.t === 'calc') load();
+  if (b.dataset.t === 'ded' && !dedLoaded) {
+    dedLoaded = true;
+    await logbook($('#dedView'), {
+      collection: C.bonusAdjustments, dateField: 'date', defaultDays: 60, addLabel: 'Add deduction',
+      intro: 'A deduction applies to the bonus period its date falls in. Use a fixed amount, a percentage of the bonus, or both.',
+      fields: [{ key: 'date', label: 'Date', type: 'date', required: true, default: () => todayISO() }, ...engineerFields(),
+        { key: 'type', label: 'Reason', type: 'select', options: c => c.bonus.deductionTypes, required: true, filter: true },
+        { key: 'amount', label: 'Amount', type: 'money' }, { key: 'percent', label: 'Percent of bonus', type: 'number' },
+        { key: 'notes', label: 'Notes', type: 'textarea', list: false }],
+    }, ctx);
+  }
+});
+load();
+</script>
+</body>
+</html>

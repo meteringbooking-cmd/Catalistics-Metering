@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catalistics AI</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  .chat { max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; min-height: calc(100vh - 140px); }
+  .chat-head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+  .chat-head img { width: 54px; }
+  .chat-head h1 { margin: 0; }
+  .chat-head p { margin: 2px 0 0; color: var(--muted); }
+  #thread { flex: 1; display: flex; flex-direction: column; gap: 14px; padding-bottom: 20px; }
+  .msg { max-width: 88%; padding: 12px 16px; border-radius: 14px; line-height: 1.55; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; white-space: pre-wrap; }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  .msg.bot.err { border-color: var(--warn); background: var(--warn-soft); }
+  .msg .meta { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--faint); display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .msg .meta button { all: unset; cursor: pointer; color: var(--muted); } .msg .meta button:hover { color: var(--text); }
+  .md p { margin: 0 0 .7em; } .md p:last-child { margin-bottom: 0; }
+  .md ul, .md ol { margin: .3em 0 .8em; padding-left: 1.3em; }
+  .md h1, .md h2, .md h3 { font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--text); margin: .8em 0 .4em; }
+  .md table { border-collapse: collapse; margin: .5em 0 .8em; font-size: 13px; width: 100%; display: block; overflow-x: auto; }
+  .md th, .md td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; }
+  .md th { background: var(--panel-2); color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
+  .md code { font-family: var(--mono); font-size: 12.5px; background: var(--bg-2); padding: 1px 5px; border-radius: 4px; }
+  .md strong { color: #fff; }
+  .thinking { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+  .dots span { display: inline-block; width: 7px; height: 7px; margin-right: 3px; border-radius: 50%; background: var(--accent); animation: blink 1.2s infinite; }
+  .dots span:nth-child(2) { animation-delay: .2s; } .dots span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+  .empty-state { text-align: center; padding: 30px 10px 10px; }
+  .empty-state img { width: 120px; opacity: .9; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
+  .chip { all: unset; cursor: pointer; padding: 9px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel); font-size: 13.5px; color: var(--text); }
+  .chip:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .composer { position: sticky; bottom: 0; padding: 12px 0 16px; background: linear-gradient(to top, var(--bg) 70%, transparent); }
+  .composer .box { display: flex; gap: 10px; align-items: flex-end; background: var(--panel); border: 1px solid var(--line-2); border-radius: 14px; padding: 8px 8px 8px 14px; }
+  .composer .box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .composer textarea { flex: 1; border: 0; background: transparent; box-shadow: none !important; resize: none; min-height: 24px; max-height: 180px; padding: 6px 0; }
+  .composer .hint { font-size: 11.5px; color: var(--faint); margin-top: 6px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="chat">
+    <div class="chat-head">
+      <img src="assets/logo-mark.png" alt="">
+      <div style="flex:1"><h1 id="aiName">Catalistics AI</h1><p>Ask about performance, attendance, quality, fleet, pay or finance. Answers come from your live figures.</p></div>
+      <button class="btn ghost" id="newChat" type="button">＋ New conversation</button>
+    </div>
+    <div id="thread"></div>
+    <div class="composer">
+      <div class="box">
+        <textarea id="q" rows="1" placeholder="Ask a question about your data…" maxlength="2000"></textarea>
+        <button class="btn primary" id="send" type="button">Ask</button>
+      </div>
+      <div class="hint">Enter to send · Shift+Enter for a new line · Check important figures against the reports before acting on them.</div>
+    </div>
+  </div>
+</main>
+</div>
+<script type="module">
+import { initPage, app, $, $$, esc, el, loadScript, toast } from './assets/app.js';
+import { functionsRegion } from './assets/firebase-config.js';
+import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js';
+
+const ctx = await initPage(); const { cfg, isAdmin } = ctx;
+const AI = cfg.ai;
+$('#aiName').textContent = AI.assistantName;
+const ask = httpsCallable(getFunctions(app, functionsRegion), 'askCatalistics', { timeout: 130000 });
+const TOOL_LABELS = { performance_summary: 'performance figures', attendance_summary: 'attendance', list_engineers: 'engineer list', list_records: 'records' };
+const STORE = 'cat-ai-thread';
+let thread = [];
+try { thread = JSON.parse(sessionStorage.getItem(STORE) || '[]'); } catch (e) { thread = []; }
+const persist = () => { try { sessionStorage.setItem(STORE, JSON.stringify(thread.slice(-30))); } catch (e) { /* ignore */ } };
+
+async function md(text) {
+  await Promise.all([loadScript('https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js'), loadScript('https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js')]);
+  return window.DOMPurify.sanitize(window.marked.parse(text || '', { gfm: true, breaks: false }));
+}
+
+async function render() {
+  const t = $('#thread');
+  if (!thread.length) {
+    t.innerHTML = `<div class="empty-state"><img src="assets/logo-mark.png" alt=""><h2 style="margin-top:12px">What would you like to know?</h2>
+      <p class="muted">Ask in plain English — for example about a team, an engineer, a contract or a date range.</p>
+      <div class="chips">${(AI.suggestedQuestions || []).map(q => `<button class="chip" type="button">${esc(q)}</button>`).join('')}</div></div>`;
+    $$('.chip', t).forEach(c => c.onclick = () => send(c.textContent));
+    return;
+  }
+  t.innerHTML = '';
+  for (const m of thread) {
+    if (m.role === 'user') { t.append(el(`<div class="msg user">${esc(m.text)}</div>`)); continue; }
+    const b = el(`<div class="msg bot ${m.error ? 'err' : ''}"><div class="md"></div></div>`);
+    $('.md', b).innerHTML = m.error ? esc(m.text) : await md(m.text);
+    if (!m.error) {
+      const looked = [...new Set((m.toolsUsed || []).map(x => TOOL_LABELS[x] || x))];
+      const meta = el(`<div class="meta">${looked.length ? `<span>Looked at: ${esc(looked.join(', '))}</span>` : ''}${isAdmin && m.usage ? `<span>≈ ${esc(AI.priceCurrency)}${Number(m.usage.cost || 0).toFixed(3)}</span>` : ''}<span class="spacer"></span><button type="button">Copy</button></div>`);
+      $('button', meta).onclick = async () => { try { await navigator.clipboard.writeText(m.text); toast('Copied'); } catch (e) { toast('Could not copy', 'warn'); } };
+      b.append(meta);
+    }
+    t.append(b);
+  }
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+}
+
+function friendlyError(e) {
+  const code = String(e?.code || '').replace('functions/', '');
+  if (['not-found', 'unavailable', 'internal'].includes(code) && /not.?found|internal/i.test(e.message || '') && !e.details) {
+    return isAdmin ? 'Catalistics AI isn\'t connected yet. The AI Cloud Function needs deploying and an API key setting — see "Catalistics AI" in the README.'
+      : 'Catalistics AI isn\'t available yet. Ask an administrator to finish setting it up.';
+  }
+  return e?.message || 'Something went wrong. Please try again.';
+}
+
+let busy = false;
+async function send(text) {
+  const question = String(text ?? $('#q').value).trim();
+  if (!question || busy) return;
+  busy = true; $('#send').disabled = true; $('#q').value = ''; autosize();
+  const history = thread.filter(m => !m.error).map(m => ({ role: m.role, text: m.text }));
+  thread.push({ role: 'user', text: question }); persist(); await render();
+  const wait = el(`<div class="msg bot thinking"><span class="dots"><span></span><span></span><span></span></span><span class="status">Looking at your data…</span></div>`);
+  $('#thread').append(wait); window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  const steps = ['Looking at your data…', 'Working out the figures…', 'Putting the answer together…'];
+  let i = 0; const tick = setInterval(() => { i = Math.min(i + 1, steps.length - 1); $('.status', wait).textContent = steps[i]; }, 5000);
+  try {
+    const { data } = await ask({ question, history });
+    thread.push({ role: 'assistant', text: data.answer, toolsUsed: data.toolsUsed, usage: data.usage });
+  } catch (e) {
+    console.error(e);
+    thread.push({ role: 'assistant', text: friendlyError(e), error: true });
+  } finally {
+    clearInterval(tick); busy = false; $('#send').disabled = false; persist(); await render(); $('#q').focus();
+  }
+}
+
+const autosize = () => { const q = $('#q'); q.style.height = 'auto'; q.style.height = Math.min(180, q.scrollHeight) + 'px'; };
+$('#q').addEventListener('input', autosize);
+$('#q').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+$('#send').onclick = () => send();
+$('#newChat').onclick = () => { thread = []; persist(); render(); $('#q').focus(); };
+if (AI.enabled === false) {
+  $('#thread').before(el(`<div class="card" style="border-color:var(--warn);margin-bottom:14px">Catalistics AI is switched off.${isAdmin ? ' Turn it on in <a href="data-input.html?tab=ai">Targets &amp; KPIs → AI assistant</a>.' : ''}</div>`));
+  $('#send').disabled = true;
+}
+render();
+$('#q').focus();
+</script>
+</body>
+</html>

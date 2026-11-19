@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Escalations</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Escalations</h1><p>Issues raised with suppliers, the client or other teams, and how long each has been open. The target resolution time is set on Targets &amp; KPIs.</p></div></div>
+  <div id="book"></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, toast, todayISO, addDays, addMonths, daysBetween, num, fmtNum, fmtPct, fmtDate, fmtMoney, groupBy, teamOf, rag, fetchRange, codeOf } from './assets/app.js';
+import { logbook, engineerFields } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const today = todayISO(), T = cfg.targets.escalationTargetDays;
+await logbook($('#book'), {
+  collection: C.escalations, dateField: 'dateRaised', defaultDays: 120, addLabel: 'Raise escalation', sheetName: 'Escalations',
+  fields: [
+    { key: 'reference', label: 'Reference', type: 'text' },
+    { key: 'dateRaised', label: 'Raised', type: 'date', required: true, default: () => today },
+    { key: 'type', label: 'Type', type: 'select', options: c => c.lists.escalationTypes, required: true, filter: true },
+    { key: 'raisedWith', label: 'Raised with', type: 'text' },
+    { key: 'jobRef', label: 'Job reference', type: 'text' },
+    ...engineerFields({ required: false }),
+    { key: 'summary', label: 'Summary', type: 'text', required: true, full: true },
+    { key: 'details', label: 'Details', type: 'textarea', list: false },
+    { key: 'status', label: 'Status', type: 'select', options: ['Open', 'Waiting on response', 'Closed'], default: 'Open', filter: true,
+      format: v => `<span class="badge ${v === 'Closed' ? 'good' : 'warn'}">${esc(v || 'Open')}</span>` },
+    { key: 'closedDate', label: 'Closed on', type: 'date', list: false },
+    { key: 'daysOpen', label: 'Days open', type: 'number', compute: r => daysBetween(r.dateRaised, r.closedDate || today),
+      format: (v, r) => `<span class="${r.status !== 'Closed' && v > T ? 't-bad' : ''}">${v}</span>` },
+  ],
+  beforeSave: d => { d.status = d.status || 'Open'; if (d.status === 'Closed' && !d.closedDate) d.closedDate = today; return d; },
+  rowClass: r => r.status !== 'Closed' && daysBetween(r.dateRaised, today) > T ? 'row-bad' : '',
+  summary: (rows, el) => {
+    const open = rows.filter(r => r.status !== 'Closed'), late = open.filter(r => daysBetween(r.dateRaised, today) > T);
+    const closed = rows.filter(r => r.status === 'Closed' && r.closedDate);
+    const avg = closed.length ? closed.reduce((t, r) => t + daysBetween(r.dateRaised, r.closedDate), 0) / closed.length : null;
+    el.innerHTML = `<div class="grid" style="--min:180px;margin-bottom:14px"><div class="kpi ${open.length ? 'warn' : 'good'}"><div class="label">Open</div><div class="value">${open.length}</div></div>
+      <div class="kpi ${late.length ? 'bad' : 'good'}"><div class="label">Over ${T} days</div><div class="value">${late.length}</div></div>
+      <div class="kpi"><div class="label">Average days to close</div><div class="value">${fmtNum(avg, 1)}</div></div></div>`;
+  },
+}, ctx);
+</script>
+</body>
+</html>

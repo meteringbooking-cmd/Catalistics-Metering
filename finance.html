@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finance</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Finance</h1><p>Revenue is meters installed × each contract's revenue per meter. Engineer cost is engineer days worked × cost per engineer day. Add any other costs below. Rates are set on <a href="data-input.html?tab=contracts">Targets &amp; KPIs</a>.</p></div>
+    <label class="field">Month<input type="month" id="month"></label></div>
+  <div class="grid" id="kpis" style="--min:190px;margin-bottom:16px"></div>
+  <div class="grid" style="--min:420px">
+    <div class="card"><div class="card-head"><h3>By contract</h3></div><div class="table-wrap"><table class="table" id="byContract"></table></div></div>
+    <div class="card"><div class="card-head"><h3>Last six months</h3></div><div class="chart-box" style="--h:260px"><canvas id="trend"></canvas></div></div>
+  </div>
+  <div class="card"><div class="card-head"><h2 style="margin:0">Other costs</h2></div><div id="entries"></div></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, where, fetchRange, fetchAll, aggregate, fmtMoney, fmtNum, fmtPct, todayISO, monthStart, monthEnd, addMonths, workingDaysBetween,
+  activeContracts, contractName, drawChart, num, groupBy } from './assets/app.js';
+import { logbook } from './assets/logbook.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+$('#month').value = todayISO().slice(0, 7);
+
+async function load() {
+  const m = $('#month').value, m0 = m + '-01', m1 = monthEnd(m0);
+  const s0 = addMonths(m0, -5);
+  const [perf, costs] = await Promise.all([fetchRange(C.dailyPerformance, s0, m1), fetchRange(C.financeEntries, s0, m1)]);
+  const month = perf.filter(r => r.date >= m0), mc = costs.filter(c => c.month === m);
+  const asOf = todayISO() < m1 ? (todayISO() < m0 ? m0 : todayISO()) : m1;
+  const done = workingDaysBetween(m0, asOf).length, all = workingDaysBetween(m0, m1).length, factor = done ? all / done : 0;
+  const a = aggregate(month, cfg), other = mc.reduce((t, c) => t + num(c.amount), 0), margin = a.revenue - a.cost - other;
+  $('#kpis').innerHTML = [
+    ['Revenue', fmtMoney(a.revenue), `${fmtNum(a.meters)} meters`, ''],
+    ['Engineer cost', fmtMoney(a.cost), `${fmtNum(a.days)} engineer days`, ''],
+    ['Other costs', fmtMoney(other), `${mc.length} entries`, ''],
+    ['Margin', fmtMoney(margin), a.revenue ? fmtPct(margin / a.revenue * 100) + ' of revenue' : '', margin >= 0 ? 'good' : 'bad'],
+    ['Revenue forecast', fmtMoney(a.revenue * factor), `${done} of ${all} working days done`, ''],
+    ['Margin forecast', fmtMoney(a.revenue * factor - a.cost * factor - other), 'Other costs not scaled', ''],
+  ].map(([l, v, s, c]) => `<div class="kpi ${c}"><div class="label">${l}</div><div class="value" style="font-size:24px">${v}</div><div class="sub">${s}</div></div>`).join('');
+
+  const rows = activeContracts(cfg).map(c => {
+    const x = aggregate(month.filter(r => r.contractId === c.id), cfg), o = mc.filter(e => e.contractId === c.id).reduce((t, e) => t + num(e.amount), 0);
+    return { c, x, o, margin: x.revenue - x.cost - o };
+  });
+  const shared = mc.filter(e => !e.contractId).reduce((t, e) => t + num(e.amount), 0);
+  $('#byContract').innerHTML = `<thead><tr><th>Contract</th><th class="num">Meters</th><th class="num">Revenue</th><th class="num">Engineer cost</th><th class="num">Other costs</th><th class="num">Margin</th><th class="num">Margin %</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td><span class="dot" style="background:${r.c.colour}"></span> ${esc(r.c.name)}</td><td class="num">${fmtNum(r.x.meters)}</td><td class="num">${fmtMoney(r.x.revenue)}</td><td class="num">${fmtMoney(r.x.cost)}</td><td class="num">${fmtMoney(r.o)}</td>
+      <td class="num ${r.margin >= 0 ? 't-good' : 't-bad'}">${fmtMoney(r.margin)}</td><td class="num">${r.x.revenue ? fmtPct(r.margin / r.x.revenue * 100) : '–'}</td></tr>`).join('')}
+    ${shared ? `<tr><td>Shared costs (no contract)</td><td></td><td></td><td></td><td class="num">${fmtMoney(shared)}</td><td class="num t-bad">${fmtMoney(-shared)}</td><td></td></tr>` : ''}
+    <tr class="total-row"><td>Total</td><td class="num">${fmtNum(a.meters)}</td><td class="num">${fmtMoney(a.revenue)}</td><td class="num">${fmtMoney(a.cost)}</td><td class="num">${fmtMoney(other)}</td><td class="num">${fmtMoney(margin)}</td><td class="num">${a.revenue ? fmtPct(margin / a.revenue * 100) : '–'}</td></tr></tbody>`;
+
+  const months = [5, 4, 3, 2, 1, 0].map(n => addMonths(m0, -n).slice(0, 7));
+  const series = months.map(mm => { const x = aggregate(perf.filter(r => r.date.startsWith(mm)), cfg); const o = costs.filter(c => c.month === mm).reduce((t, c) => t + num(c.amount), 0); return { rev: x.revenue, cost: x.cost + o }; });
+  drawChart($('#trend'), { data: { labels: months.map(mm => new Date(mm + '-01').toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })), datasets: [
+    { type: 'bar', label: 'Revenue', data: series.map(s => Math.round(s.rev)), backgroundColor: '#3d8fe0cc', borderRadius: 3 },
+    { type: 'bar', label: 'Costs', data: series.map(s => Math.round(s.cost)), backgroundColor: '#f06363aa', borderRadius: 3 },
+    { type: 'line', label: 'Margin', data: series.map(s => Math.round(s.rev - s.cost)), borderColor: '#33c48a', tension: .3 }] },
+    options: { scales: { y: { ticks: { callback: v => fmtMoney(v) } } } } });
+}
+$('#month').onchange = load;
+await load();
+
+await logbook($('#entries'), {
+  collection: C.financeEntries, dateField: 'date', defaultDays: 180, addLabel: 'Add cost', sheetName: 'Costs',
+  fields: [
+    { key: 'date', label: 'Date', type: 'date', required: true, default: () => todayISO() },
+    { key: 'contractId', label: 'Contract', type: 'contract', help: 'Leave blank for a shared cost.' },
+    { key: 'category', label: 'Category', type: 'select', options: c => c.lists.financeCategories, required: true, filter: true },
+    { key: 'description', label: 'Description', type: 'text' },
+    { key: 'supplier', label: 'Supplier', type: 'text' },
+    { key: 'amount', label: 'Amount', type: 'money', required: true },
+  ],
+  beforeSave: d => ({ ...d, month: (d.date || '').slice(0, 7) }),
+  afterSave: () => load(),
+}, ctx);
+</script>
+</body>
+</html>

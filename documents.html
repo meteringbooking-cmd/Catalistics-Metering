@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portal Documents</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Portal Documents</h1><p>Policies, procedures, forms and training material for engineers to open from their portal. Files are stored in Firebase Storage.</p></div>
+    <button class="btn primary" id="upload" type="button">⬆ Upload document</button></div>
+  <div class="toolbar">
+    <label class="field">Category<select id="cat"></select></label>
+    <label class="field">Search<input type="search" id="q"></label>
+  </div>
+  <div class="table-wrap"><table class="table" id="tbl"></table></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, db, app, doc, collection, addDoc, deleteDoc, serverTimestamp, $, $$, esc, el, options, fetchAll, teamOf, fmtDate, iso, toast, modal, confirmBox, makeSortable } from './assets/app.js';
+import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const storage = getStorage(app);
+$('#cat').innerHTML = options(cfg.lists.documentCategories, '', { blank: 'All categories' });
+let docs = [];
+const size = b => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+
+async function load() { docs = (await fetchAll(C.portalDocuments)).sort((a, b) => String(b.uploadedOn).localeCompare(String(a.uploadedOn))); draw(); }
+function draw() {
+  const c = $('#cat').value, q = $('#q').value.toLowerCase();
+  const vis = docs.filter(d => (!c || d.category === c) && (!q || `${d.title} ${d.description} ${d.fileName}`.toLowerCase().includes(q)));
+  $('#tbl').innerHTML = `<thead><tr><th>Title</th><th>Category</th><th>Visible to</th><th>File</th><th>Uploaded</th><th data-nosort></th></tr></thead><tbody>${vis.map(d => `<tr data-id="${esc(d.id)}">
+    <td><b>${esc(d.title)}</b><div class="faint" style="font-size:12px">${esc(d.description || '')}</div></td><td>${esc(d.category)}</td>
+    <td>${d.audience === 'Team' ? esc(teamOf(d.teamId)?.name || 'Team') : 'Everyone'}</td><td><a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.fileName)}</a> <span class="faint">${size(d.size || 0)}</span></td>
+    <td>${fmtDate(d.uploadedOn)}</td><td class="actions"><button class="btn sm danger" data-del>Delete</button></td></tr>`).join('') || '<tr><td colspan="6" class="empty">No documents yet.</td></tr>'}</tbody>`;
+  makeSortable($('#tbl'));
+  $$('[data-del]').forEach(b => b.onclick = async () => {
+    const d = docs.find(x => x.id === b.closest('tr').dataset.id);
+    if (!(await confirmBox(`Delete “${d.title}”? Engineers will no longer see it.`, { danger: true, okLabel: 'Delete' }))) return;
+    try { await deleteObject(ref(storage, d.path)); } catch (e) { console.warn(e); }
+    await deleteDoc(doc(db, C.portalDocuments, d.id)); toast('Deleted', 'good'); load();
+  });
+}
+$('#upload').onclick = () => {
+  const body = el(`<form class="form-grid" onsubmit="return false">
+    <label class="field full">File<input type="file" id="file" required></label>
+    <label class="field full">Title<input id="title" required></label>
+    <label class="field">Category<select id="category">${options(cfg.lists.documentCategories)}</select></label>
+    <label class="field">Visible to<select id="aud"><option>Everyone</option><option>Team</option></select></label>
+    <label class="field">Team<select id="team">${options(cfg.teams.map(t => ({ value: t.id, label: t.name })), '', { blank: '—' })}</select></label>
+    <label class="field full">Description<input id="desc"></label><div class="full help" id="prog"></div></form>`);
+  $('#file', body).onchange = e => { if (!$('#title', body).value) $('#title', body).value = e.target.files[0]?.name.replace(/\.[^.]+$/, '') || ''; };
+  modal({ title: 'Upload document', body, actions: [{ label: 'Cancel', kind: 'ghost' }, { label: 'Upload', kind: 'primary', onClick: () => new Promise((res, rej) => {
+    const f = $('#file', body).files[0];
+    if (!f || !$('#title', body).value.trim()) { toast('Choose a file and give it a title', 'warn'); return res(false); }
+    if ($('#aud', body).value === 'Team' && !$('#team', body).value) { toast('Choose the team', 'warn'); return res(false); }
+    const path = `portal-documents/${Date.now()}-${f.name.replace(/[^\w.\-]+/g, '_')}`;
+    const task = uploadBytesResumable(ref(storage, path), f);
+    task.on('state_changed', s => { $('#prog', body).textContent = `Uploading… ${Math.round(s.bytesTransferred / s.totalBytes * 100)}%`; }, err => rej(err), async () => {
+      const url = await getDownloadURL(task.snapshot.ref);
+      await addDoc(collection(db, C.portalDocuments), { title: $('#title', body).value.trim(), category: $('#category', body).value, audience: $('#aud', body).value,
+        teamId: $('#aud', body).value === 'Team' ? $('#team', body).value : '', description: $('#desc', body).value.trim(), fileName: f.name, size: f.size, path, url,
+        uploadedOn: iso(new Date()), uploadedBy: ctx.user.email, createdAt: serverTimestamp() });
+      toast('Uploaded', 'good'); load(); res(true);
+    });
+  }) }] });
+};
+$('#cat').onchange = draw; $('#q').oninput = draw;
+load();
+</script>
+</body>
+</html>

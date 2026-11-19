@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Office Screen</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  body { overflow: hidden; }
+  .os { height: 100vh; display: flex; flex-direction: column; padding: 2.2vh 3vw; }
+  .os-head { display: flex; align-items: center; gap: 2vw; }
+  .os-head img { height: 7vh; }
+  .os-head .client { font-family: var(--display); font-size: 3.2vh; font-weight: 700; }
+  .os-head .clock { margin-left: auto; text-align: right; font-family: var(--display); font-size: 5vh; font-weight: 600; line-height: 1; }
+  .os-head .clock small { display: block; font-size: 2vh; color: var(--muted); font-weight: 500; margin-top: .6vh; }
+  .slide { flex: 1; display: none; flex-direction: column; justify-content: center; animation: fade .6s ease; }
+  .slide.on { display: flex; }
+  @keyframes fade { from { opacity: 0; transform: translateY(1vh); } }
+  .slide h2 { font-size: 4.6vh; display: flex; align-items: center; gap: 1.2vw; margin-bottom: 3vh; }
+  .slide h2 .sw { width: 1.2vh; height: 5vh; border-radius: .4vh; }
+  .hero { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 2vw; }
+  .hero .kpi { padding: 3vh 2vw; border-radius: 2vh; }
+  .hero .kpi .label { font-size: 2vh; }
+  .hero .kpi .value { font-size: 10vh; }
+  .hero .kpi.first .value { font-size: 15vh; }
+  .hero .kpi .sub { font-size: 2.3vh; }
+  .hero .kpi .bar { height: 1.2vh; border-radius: 1vh; }
+  .board { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4vh 3vw; }
+  .board .item { display: flex; align-items: center; gap: 1.5vw; font-size: 3.2vh; padding: 1.4vh 1.5vw; background: var(--panel); border: 1px solid var(--line); border-radius: 1.4vh; }
+  .board .pos { font-family: var(--display); font-weight: 800; color: var(--accent-2); width: 3vw; }
+  .board .val { margin-left: auto; font-family: var(--display); font-weight: 700; }
+  .dots { display: flex; gap: .8vw; justify-content: center; padding-top: 1vh; }
+  .dots span { width: 1vh; height: 1vh; border-radius: 50%; background: var(--line-2); }
+  .dots span.on { background: var(--accent); }
+  .exit { position: fixed; right: 12px; bottom: 10px; font-size: 12px; opacity: .25; }
+  .exit:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app" hidden>
+<main class="page" style="padding:0">
+  <div class="os">
+    <div class="os-head"><img src="assets/logo.png" alt="Catalistics"><div><div class="client" id="client"></div><div class="muted" id="sub"></div></div>
+      <div class="clock"><span id="clock"></span><small id="date"></small></div></div>
+    <div id="slides" style="flex:1;display:flex;flex-direction:column"></div>
+    <div class="dots" id="dots"></div>
+  </div>
+  <a class="exit" href="index.html">Exit screen</a>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, $$, esc, fetchRange, prevWorkingDay, monthStart, aggregate, attendanceSummary, rag, fmtNum, fmtPct, fmtDateLong, todayISO, activeContracts, groupBy } from './assets/app.js';
+
+const ctx = await initPage();
+document.body.classList.add('kiosk');
+const { cfg } = ctx;
+$('#client').textContent = cfg.company.clientName;
+const tick = () => { const d = new Date(); $('#clock').textContent = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); $('#date').textContent = fmtDateLong(todayISO()); };
+tick(); setInterval(tick, 15000);
+
+let idx = 0, timer;
+async function build() {
+  const day = prevWorkingDay();
+  $('#sub').textContent = `Performance for ${fmtDateLong(day)}`;
+  const [perf, att] = await Promise.all([fetchRange(C.dailyPerformance, monthStart(day), day), fetchRange(C.attendance, day, day)]);
+  const slides = [];
+  for (const c of activeContracts(cfg)) {
+    const mine = perf.filter(r => r.contractId === c.id);
+    const d = aggregate(mine.filter(r => r.date === day), cfg);
+    const m = aggregate(mine, cfg);
+    slides.push(`<h2><span class="sw" style="background:${c.colour}"></span>${esc(c.name)}</h2>
+      <div class="hero">
+        <div class="kpi first ${rag(d.targetPct, 100)}"><div class="label">Meters yesterday</div><div class="value">${fmtNum(d.meters)}</div><div class="sub">Target ${fmtNum(d.target, 0)} · ${fmtPct(d.targetPct, 0)} · ${d.days} engineers</div><div class="bar"><span style="width:${Math.min(100, d.targetPct || 0)}%"></span></div></div>
+        <div class="kpi ${rag(d.completionPct, c.completionTarget)}"><div class="label">Completion</div><div class="value">${fmtPct(d.completionPct, 0)}</div><div class="sub">Target ${c.completionTarget}%</div></div>
+        <div class="kpi ${rag(m.targetPct, 100)}"><div class="label">Month to date</div><div class="value">${fmtNum(m.meters)}</div><div class="sub">${fmtPct(m.targetPct, 0)} of target ${fmtNum(m.target, 0)}</div></div>
+      </div>`);
+  }
+  const top = perf.filter(r => r.date === day).sort((a, b) => b.metersInstalled - a.metersInstalled).slice(0, 10);
+  if (top.length) slides.push(`<h2>⭐ Top performers yesterday</h2><div class="board">${top.map((r, i) => `<div class="item"><span class="pos">${i + 1}</span>${esc(r.engineerName)}<span class="val">${fmtNum(r.metersInstalled)}</span></div>`).join('')}</div>`);
+  const monthTop = [...groupBy(perf, r => r.engineerId).values()].map(rs => ({ name: rs[0].engineerName, ...aggregate(rs, cfg) }))
+    .filter(x => x.days >= 3).sort((a, b) => (b.metersPerDay || 0) - (a.metersPerDay || 0)).slice(0, 10);
+  if (monthTop.length) slides.push(`<h2>🏆 Month to date · meters per day</h2><div class="board">${monthTop.map((r, i) => `<div class="item"><span class="pos">${i + 1}</span>${esc(r.name)}<span class="val">${fmtNum(r.metersPerDay, 2)}</span></div>`).join('')}</div>`);
+  const s = attendanceSummary(att, cfg);
+  slides.push(`<h2>🙋 Attendance yesterday</h2><div class="hero">
+    <div class="kpi first ${rag(s.attendancePct, cfg.targets.attendanceTarget)}"><div class="label">Attendance</div><div class="value">${fmtPct(s.attendancePct, 0)}</div><div class="sub">Target ${cfg.targets.attendanceTarget}%</div></div>
+    <div class="kpi"><div class="label">At work</div><div class="value">${s.present}</div><div class="sub">${s.working} on jobs</div></div>
+    <div class="kpi ${s.sickness ? 'warn' : ''}"><div class="label">Sick / absent</div><div class="value">${s.sickness + s.absence}</div><div class="sub">${s.holiday} on holiday</div></div></div>`);
+
+  $('#slides').innerHTML = slides.map(h => `<div class="slide">${h}</div>`).join('');
+  $('#dots').innerHTML = slides.map(() => '<span></span>').join('');
+  idx = idx % slides.length; show();
+}
+function show() {
+  const all = $$('.slide'); if (!all.length) return;
+  all.forEach((s, i) => s.classList.toggle('on', i === idx));
+  $$('#dots span').forEach((s, i) => s.classList.toggle('on', i === idx));
+}
+await build();
+clearInterval(timer);
+timer = setInterval(() => { idx = (idx + 1) % $$('.slide').length; show(); }, 15000);
+setInterval(build, Math.max(1, cfg.company.screenRefreshMinutes) * 60000);
+</script>
+</body>
+</html>

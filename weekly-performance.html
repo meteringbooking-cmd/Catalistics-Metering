@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weekly Performance</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Weekly Performance</h1><p>The last five weeks for every engineer. Each week shows meters installed and, underneath, the average per day worked — coloured against the contract target.</p></div></div>
+  <div class="toolbar">
+    <label class="field">Weeks ending<input type="date" id="end"></label>
+    <label class="field">Contract<span id="cWrap"></span></label>
+    <label class="field">Show<select id="metric"><option value="meters">Meters (avg per day)</option><option value="completion">Completion %</option><option value="days">Days worked</option></select></label>
+    <div class="spacer"></div><button class="btn" id="export" type="button">⬇ Export</button>
+  </div>
+  <div class="card" style="margin-bottom:16px"><div class="chart-box" style="--h:240px"><canvas id="chart"></canvas></div></div>
+  <div class="table-wrap"><table class="table" id="tbl"></table></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, $, esc, fetchRange, todayISO, weekStart, addDays, aggregate, rag, fmtNum, fmtPct, fmtDate, contractSelect, contractOf, teamOf, groupBy, exportXlsx, drawChart, activeContracts, makeSortable } from './assets/app.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+$('#cWrap').innerHTML = contractSelect('contract');
+$('#end').value = todayISO();
+let exportRows = [];
+['end', 'contract', 'metric'].forEach(id => $('#' + id).onchange = load);
+
+async function load() {
+  const lastWeek = weekStart($('#end').value);
+  const weeks = [4, 3, 2, 1, 0].map(n => addDays(lastWeek, -7 * n));
+  const from = weeks[0], to = addDays(lastWeek, 6);
+  const cid = $('#contract').value, metric = $('#metric').value;
+  const perf = (await fetchRange(C.dailyPerformance, from, to)).filter(r => !cid || r.contractId === cid);
+
+  // Chart: meters per week per contract
+  const cons = activeContracts(cfg).filter(c => !cid || c.id === cid);
+  drawChart($('#chart'), {
+    type: 'bar',
+    data: { labels: weeks.map(w => 'w/c ' + fmtDate(w, { day: '2-digit', month: 'short' })),
+      datasets: cons.flatMap(c => {
+        const ag = weeks.map(w => aggregate(perf.filter(r => r.contractId === c.id && r.date >= w && r.date <= addDays(w, 6)), cfg));
+        return [{ label: c.name, data: ag.map(a => a.meters), backgroundColor: c.colour + 'cc', borderRadius: 4 },
+          { type: 'line', label: `${c.name} target`, data: ag.map(a => Math.round(a.target)), borderColor: c.colour, borderDash: [5, 4], pointRadius: 0 }];
+      }) },
+    options: { scales: { y: { beginAtZero: true } } },
+  });
+
+  const byEng = groupBy(perf, r => r.engineerId);
+  const engRows = [...byEng.values()].map(rs => ({ id: rs[0].engineerId, name: rs[0].engineerName, teamId: rs[rs.length - 1].teamId, contractId: rs[rs.length - 1].contractId, rows: rs }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'en', { numeric: true }));
+  exportRows = [];
+  const cell = (rs, c) => {
+    const a = aggregate(rs, cfg);
+    if (!a.days) return '<td class="num cell-muted">–</td>';
+    if (metric === 'days') return `<td class="num" data-v="${a.days}">${a.days}</td>`;
+    if (metric === 'completion') return `<td class="num cell-${rag(a.completionPct, c?.completionTarget)}" data-v="${a.completionPct ?? 0}">${fmtPct(a.completionPct, 0)}</td>`;
+    return `<td class="num cell-${rag(a.metersPerDay, c?.dailyMeterTarget)}" data-v="${a.meters}"><b>${fmtNum(a.meters)}</b><div style="font-size:11.5px;opacity:.85">${fmtNum(a.metersPerDay, 2)}/day</div></td>`;
+  };
+  let html = `<thead><tr><th>Engineer</th><th>Team</th>${weeks.map(w => `<th class="num">w/c ${fmtDate(w, { day: '2-digit', month: 'short' })}</th>`).join('')}<th class="num">5-week total</th></tr></thead><tbody>`;
+  for (const e of engRows) {
+    const c = contractOf(e.contractId);
+    html += `<tr><td>${esc(e.name)}</td><td>${esc(teamOf(e.teamId)?.name || '–')}</td>${weeks.map(w => cell(e.rows.filter(r => r.date >= w && r.date <= addDays(w, 6)), c)).join('')}${cell(e.rows, c)}</tr>`;
+    const row = { Engineer: e.name, Team: teamOf(e.teamId)?.name || '' };
+    weeks.forEach(w => { const a = aggregate(e.rows.filter(r => r.date >= w && r.date <= addDays(w, 6)), cfg); row[`w/c ${w} meters`] = a.meters; row[`w/c ${w} days`] = a.days; row[`w/c ${w} completion %`] = a.completionPct === null ? '' : Math.round(a.completionPct); });
+    exportRows.push(row);
+  }
+  if (!engRows.length) html += `<tr><td colspan="8" class="empty">No figures in these five weeks.</td></tr>`;
+  $('#tbl').innerHTML = html + '</tbody>';
+  makeSortable($('#tbl'));
+}
+$('#export').onclick = () => exportXlsx(`weekly-performance-${$('#end').value}`, { Weekly: exportRows });
+load();
+</script>
+</body>
+</html>

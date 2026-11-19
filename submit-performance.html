@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Submit Performance</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  #grid td input { width: 78px; text-align: right; }
+  #grid td input.note { width: 100%; min-width: 160px; text-align: left; }
+  #grid tr.changed td { background: rgba(61,143,224,.07); }
+  #grid tr.invalid td input.bad-in { border-color: var(--bad); }
+</style>
+</head>
+<body>
+<div id="app" hidden>
+<main class="page">
+  <div class="page-head"><div><h1>Submit Performance</h1>
+    <p>Type each engineer's figures for the day, or upload a spreadsheet. Opening a date that already has figures lets you amend them. Leave a row blank for anyone who didn't work — clearing a saved row removes it.</p></div></div>
+  <div class="toolbar">
+    <label class="field">Date<input type="date" id="day"></label>
+    <label class="field">Contract<span id="cWrap"></span></label>
+    <label class="field">Team<span id="tWrap"></span></label>
+    <div class="spacer"></div>
+    <button class="btn" id="template" type="button">⬇ Upload template</button>
+    <label class="btn" style="cursor:pointer">⬆ Upload spreadsheet<input type="file" id="file" accept=".xlsx,.xls,.csv" hidden></label>
+    <button class="btn primary" id="save" type="button">Save figures</button>
+  </div>
+  <div class="row" style="margin-bottom:10px"><span class="muted" id="status"></span></div>
+  <div class="table-wrap" style="--max-h:72vh"><table class="table" id="grid"></table></div>
+</main>
+</div>
+<script type="module">
+import { initPage, C, db, doc, $, $$, esc, fetchRange, getEngineers, prevWorkingDay, stamp, commitInBatches, toast, modal, confirmBox,
+  contractSelect, teamSelect, teamOf, readSpreadsheet, pick, normaliseDate, matchEngineer, num, exportXlsx, fmtDateLong } from './assets/app.js';
+
+const ctx = await initPage(); const { cfg } = ctx;
+const FIELDS = [['jobsBooked', 'Booked'], ['jobsCompleted', 'Completed'], ['metersInstalled', 'Meters'], ['aborts', 'Aborts'], ['noAccess', 'No access'], ['miles', 'Miles']];
+$('#cWrap').innerHTML = contractSelect('contract');
+$('#tWrap').innerHTML = teamSelect('team');
+$('#day').value = new URLSearchParams(location.search).get('date') || prevWorkingDay();
+let engineers = [], existing = new Map(), dirty = false;
+
+$('#contract').onchange = () => { $('#tWrap').innerHTML = teamSelect('team', '', 'All teams', $('#contract').value); $('#team').onchange = draw; draw(); };
+$('#team').onchange = draw;
+$('#day').onchange = async () => { if (dirty && !(await confirmBox('You have unsaved figures. Switch date and lose them?'))) return; load(); };
+window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+async function load() {
+  const day = $('#day').value;
+  [engineers] = await Promise.all([getEngineers()]);
+  const rows = await fetchRange(C.dailyPerformance, day, day);
+  existing = new Map(rows.map(r => [r.engineerId, r]));
+  // Include leavers who already have figures for this day
+  for (const r of rows) if (!engineers.some(e => e.id === r.engineerId)) engineers.push({ id: r.engineerId, name: r.engineerName, teamId: r.teamId, contractId: r.contractId });
+  dirty = false; draw();
+  $('#status').textContent = `${rows.length} engineer(s) already saved for ${fmtDateLong(day)}.`;
+}
+
+function draw() {
+  const cid = $('#contract').value, tid = $('#team').value;
+  const list = engineers.filter(e => (!cid || e.contractId === cid) && (!tid || e.teamId === tid));
+  const teams = [...new Set(list.map(e => e.teamId || ''))].sort((a, b) => (teamOf(a)?.name || 'zz').localeCompare(teamOf(b)?.name || 'zz', 'en', { numeric: true }));
+  let html = `<thead><tr><th>Engineer</th>${FIELDS.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th>Notes</th></tr></thead><tbody>`;
+  for (const t of teams) {
+    const tm = teamOf(t);
+    html += `<tr class="group-row"><td colspan="${FIELDS.length + 2}">${tm ? `${esc(tm.name)} — ${esc(tm.leader)}` : 'No team'}</td></tr>`;
+    for (const e of list.filter(x => (x.teamId || '') === t)) {
+      const r = existing.get(e.id) || {};
+      html += `<tr data-id="${esc(e.id)}"><td>${esc(e.name)}${existing.has(e.id) ? ' <span class="badge info">saved</span>' : ''}</td>
+        ${FIELDS.map(([k]) => `<td class="num"><input type="number" min="0" step="any" data-k="${k}" value="${r[k] ?? ''}"></td>`).join('')}
+        <td><input class="note" data-k="notes" value="${esc(r.notes || '')}"></td></tr>`;
+    }
+  }
+  if (!list.length) html += `<tr><td colspan="${FIELDS.length + 2}" class="empty">No engineers. Add them on <a href="engineers.html">Engineers</a>.</td></tr>`;
+  $('#grid').innerHTML = html + '</tbody>';
+  $$('#grid input').forEach(i => i.oninput = () => { dirty = true; const tr = i.closest('tr'); tr.classList.add('changed'); check(tr); });
+}
+function check(tr) {
+  const v = k => $(`[data-k=${k}]`, tr).value;
+  const bad = v('jobsCompleted') !== '' && v('jobsBooked') !== '' && num(v('jobsCompleted')) > num(v('jobsBooked'));
+  $('[data-k=jobsCompleted]', tr).classList.toggle('bad-in', bad);
+  tr.classList.toggle('invalid', bad);
+}
+function rowData(e, values, date) {
+  return stamp({ date, engineerId: e.id, engineerName: e.name, teamId: e.teamId || '', contractId: e.contractId || '', ...values });
+}
+
+$('#save').onclick = async () => {
+  if ($$('#grid tr.invalid').length) { toast('Completed jobs can\'t be more than booked jobs — check the red boxes.', 'warn'); return; }
+  const day = $('#day').value; const ops = [];
+  for (const tr of $$('#grid tr.changed')) {
+    const e = engineers.find(x => x.id === tr.dataset.id);
+    const values = {}; let any = false;
+    for (const [k] of FIELDS) { const v = $(`[data-k=${k}]`, tr).value; values[k] = v === '' ? 0 : num(v); if (v !== '') any = true; }
+    values.notes = $('[data-k=notes]', tr).value.trim();
+    const ref = doc(db, C.dailyPerformance, `${day}_${e.id}`);
+    if (any) ops.push({ type: 'set', ref, data: rowData(e, values, day) });
+    else if (existing.has(e.id)) ops.push({ type: 'delete', ref });
+  }
+  if (!ops.length) { toast('Nothing has changed'); return; }
+  $('#save').disabled = true;
+  try { await commitInBatches(ops); toast(`Saved ${ops.length} engineer(s)`, 'good'); await load(); }
+  catch (e) { toast(e.message, 'bad'); } finally { $('#save').disabled = false; }
+};
+
+$('#template').onclick = () => exportXlsx('performance-upload-template', { Upload: engineers.map(e => ({ Date: $('#day').value, Engineer: e.name, 'Employee number': e.employeeNumber || '', 'Jobs booked': '', 'Jobs completed': '', Meters: '', Aborts: '', 'No access': '', Miles: '', Notes: '' })) });
+
+$('#file').onchange = async ev => {
+  const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
+  const all = await getEngineers({ includeLeavers: true });
+  const raw = await readSpreadsheet(f);
+  const ready = [], missing = [];
+  for (const r of raw) {
+    const e = matchEngineer(all, pick(r, 'Employee number', 'Employee no', 'Engineer', 'Engineer name', 'Name'));
+    if (!e) { missing.push(pick(r, 'Engineer', 'Engineer name', 'Name') || '(blank)'); continue; }
+    const date = normaliseDate(pick(r, 'Date', 'Work date', 'Day')) || $('#day').value;
+    const values = {
+      jobsBooked: num(pick(r, 'Jobs booked', 'Booked')), jobsCompleted: num(pick(r, 'Jobs completed', 'Completed')),
+      metersInstalled: num(pick(r, 'Meters', 'Meters installed', 'Installed')), aborts: num(pick(r, 'Aborts', 'Aborted')),
+      noAccess: num(pick(r, 'No access', 'No accesses')), miles: num(pick(r, 'Miles', 'Mileage')), notes: String(pick(r, 'Notes', 'Comments') || ''),
+    };
+    ready.push({ e, date, values });
+  }
+  const dates = [...new Set(ready.map(r => r.date))].sort();
+  modal({ title: 'Upload figures', body: `<p><b>${ready.length}</b> row(s) ready across <b>${dates.length}</b> date(s): ${dates.slice(0, 6).map(fmtDateLong).join(', ')}${dates.length > 6 ? '…' : ''}.</p>
+      ${missing.length ? `<p class="t-warn">${missing.length} row(s) skipped because the engineer isn't in the directory: ${missing.slice(0, 8).map(esc).join(', ')}${missing.length > 8 ? '…' : ''}</p>` : ''}
+      <p class="muted">Existing figures for the same engineer and date will be replaced.</p>`,
+    actions: [{ label: 'Cancel', kind: 'ghost' }, { label: 'Save upload', kind: 'primary', onClick: async () => {
+      await commitInBatches(ready.map(r => ({ type: 'set', ref: doc(db, C.dailyPerformance, `${r.date}_${r.e.id}`), data: rowData(r.e, r.values, r.date) })));
+      toast(`Uploaded ${ready.length} row(s)`, 'good'); load();
+    } }] });
+};
+load();
+</script>
+</body>
+</html>
