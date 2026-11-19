@@ -62,6 +62,7 @@ export const C = {
   notifications: 'notifications',
   portalDocuments: 'portalDocuments',
   aiUsage: 'aiUsage',                   // one record per AI question: who, tokens, cost
+  qualificationSubmissions: 'qualificationSubmissions', // certificates sent in by engineers, awaiting approval
 };
 
 /* =====================================================================
@@ -242,6 +243,48 @@ export const PAGES = [
   ['ai-usage.html', 'AI Usage', 'admin', 'activity', 'Every question asked of Catalistics AI, by whom, and what it cost against the monthly budget.', ['admin']],
   ['demo-data.html', 'Demo Data', 'admin', 'database', 'Fill the system with sample data for a demonstration, or clear it again.', ['admin']],
 ].map(([file, name, cat, icon, desc, roles]) => ({ file, name, cat, icon, desc, roles: roles || ['admin', 'manager'] }));
+
+/* =====================================================================
+   "Add data" menu — every way of putting data into the system.
+   ?add=1 opens the page's add form straight away.
+   ===================================================================== */
+export const QUICK_ADD = [
+  ['Daily data', [
+    ['submit-performance.html', 'Daily figures', 'Type or upload a spreadsheet', 'edit'],
+    ['attendance.html', 'Attendance', 'Codes for a day, or upload a spreadsheet', 'userCheck'],
+    ['scheduling.html?add=1', 'Booked job', 'Add one, or upload a job list', 'route'],
+  ]],
+  ['People', [
+    ['engineers.html?add=1', 'Engineer', 'Add to the directory', 'users'],
+    ['absences.html?add=1', 'Absence', 'Sickness or other absence', 'heartPulse'],
+    ['meetings.html?add=1', 'Meeting', 'One-to-one, van audit, review', 'messages'],
+    ['on-call.html?add=1', 'On-call rota', 'Who is on call', 'phone'],
+  ]],
+  ['Quality & compliance', [
+    ['compliance-audits.html?add=1', 'Audit result', '', 'clipboardCheck'],
+    ['complaints.html?add=1', 'Complaint', '', 'megaphone'],
+    ['skills-matrix.html?add=1', 'Qualification', 'With certificate', 'grid'],
+    ['job-refusals.html?add=1', 'Job refusal', '', 'ban'],
+    ['no-access.html?add=1', 'No access visit', '', 'door'],
+    ['customer-payments.html?add=1', 'Customer payment', '', 'card'],
+    ['escalations.html?add=1', 'Escalation', '', 'flag'],
+    ['tester-calibration.html?add=1', 'Tester calibration', '', 'wrench'],
+  ]],
+  ['Fleet', [
+    ['vehicle-checks.html?add=1', 'Vehicle check', '', 'truck'],
+    ['van-times.html?add=1', 'Van times', 'Or import a tracking export', 'clock'],
+    ['speeding.html?add=1', 'Speeding incident', '', 'gauge'],
+  ]],
+  ['Pay & finance', [
+    ['additional-payments.html?add=1', 'Additional payment claim', '', 'receipt'],
+    ['bonus-calculator.html?tab=ded&add=1', 'Bonus deduction', '', 'target'],
+    ['finance.html?add=1', 'Cost', 'Vehicles, fuel, stock…', 'pound'],
+  ]],
+  ['Engineer portal', [
+    ['notifications.html?add=1', 'Notice', 'Publish to engineers', 'bell'],
+    ['documents.html?add=1', 'Document', 'Upload a file', 'folder'],
+  ]],
+];
 
 /* =====================================================================
    Line icons (24×24, stroke = currentColor)
@@ -706,6 +749,9 @@ function buildShell(role, cfg, kiosk) {
       <header class="topbar">
         <button class="btn sm ghost menu-btn" type="button" aria-label="Menu">${icon('menu', 18)}</button>
         <div class="title">${esc(document.title.split(' · ')[0])}</div>
+        ${role === 'engineer' ? '' : `<div class="add-menu"><button class="btn primary sm" type="button" id="addMenuBtn">${icon('plus', 15)} Add data</button>
+          <div class="add-panel" hidden>${QUICK_ADD.map(([g, items]) => `<div class="add-group"><div class="add-head">${esc(g)}</div>${items.map(([href, name, sub, ic]) =>
+            `<a href="${href}">${icon(ic, 16)}<span><b>${esc(name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span></a>`).join('')}</div>`).join('')}</div></div>`}
         <div class="user"><span class="hide-sm">${esc(state.profile?.name || state.user?.email || '')}</span><span class="badge info" style="text-transform:capitalize">${esc(role)}</span>
           <div class="avatar">${esc((state.profile?.name || state.user?.email || '?').slice(0, 1).toUpperCase())}</div>
           <button class="btn sm ghost" id="signOutBtn" type="button">${icon('logout', 15)} Sign out</button></div>
@@ -721,6 +767,13 @@ function buildShell(role, cfg, kiosk) {
   });
   $('.menu-btn', shell).onclick = () => document.body.classList.toggle('nav-open');
   $('#signOutBtn', shell).onclick = logout;
+  const addBtn = $('#addMenuBtn', shell);
+  if (addBtn) {
+    const panel = $('.add-panel', shell);
+    addBtn.onclick = e => { e.stopPropagation(); panel.hidden = !panel.hidden; };
+    document.addEventListener('click', e => { if (!panel.contains(e.target)) panel.hidden = true; });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') panel.hidden = true; });
+  }
   if (kiosk) document.body.classList.add('kiosk');
 }
 
@@ -777,6 +830,24 @@ export async function initPage({ roles = ['admin', 'manager'], shell = true } = 
   $('#app')?.removeAttribute('hidden');
   boot.remove();
   return { user, profile, role, cfg, isAdmin: role === 'admin' };
+}
+
+/** Upload a file to Firebase Storage. Returns { path, url }. Throws if Storage isn't switched on. */
+export async function uploadFile(folder, file, onProgress) {
+  const { getStorage, ref, uploadBytesResumable, getDownloadURL } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js');
+  const path = `${folder}/${Date.now()}-${String(file.name).replace(/[^\w.\-]+/g, '_')}`;
+  const task = uploadBytesResumable(ref(getStorage(app), path), file);
+  await new Promise((res, rej) => task.on('state_changed', snap => onProgress?.(snap.bytesTransferred / snap.totalBytes), rej, res));
+  return { path, url: await getDownloadURL(task.snapshot.ref) };
+}
+
+/** True (once) when the page was opened with ?add=1 from the Add data menu. */
+export function wantsAdd() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has('add')) return false;
+  q.delete('add');
+  history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q : ''));
+  return true;
 }
 
 /* Shared filter-bar pieces */

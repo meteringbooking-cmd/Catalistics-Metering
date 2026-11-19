@@ -17,7 +17,7 @@
       <label class="field">From<input type="date" id="from"></label><label class="field">To<input type="date" id="to"></label>
       <label class="field">Contract<span id="cWrap"></span></label>
       <div class="spacer"></div>
-      <button class="btn" id="payroll" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg> Payroll export</button>
+      <button class="btn" id="addDed" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Add deduction</button><button class="btn" id="payroll" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg> Payroll export</button>
       <button class="btn primary" id="approveAll" type="button">Approve all &amp; publish</button>
     </div>
     <div class="grid" id="kpis" style="--min:180px;margin-bottom:16px"></div>
@@ -115,14 +115,14 @@ $('#payroll').onclick = async () => {
   });
 };
 
-let dedLoaded = false;
+let dedLoaded = false, dedApi = null;
 $$('.tabs button').forEach(b => b.onclick = async () => {
   $$('.tabs button').forEach(x => x.classList.toggle('on', x === b));
   $('#calcView').hidden = b.dataset.t !== 'calc'; $('#dedView').hidden = b.dataset.t !== 'ded';
   if (b.dataset.t === 'calc') load();
   if (b.dataset.t === 'ded' && !dedLoaded) {
     dedLoaded = true;
-    await logbook($('#dedView'), {
+    dedApi = await logbook($('#dedView'), {
       collection: C.bonusAdjustments, dateField: 'date', defaultDays: 60, addLabel: 'Add deduction',
       intro: 'A deduction applies to the bonus period its date falls in. Use a fixed amount, a percentage of the bonus, or both.',
       fields: [{ key: 'date', label: 'Date', type: 'date', required: true, default: () => todayISO() }, ...engineerFields(),
@@ -132,6 +132,8 @@ $$('.tabs button').forEach(b => b.onclick = async () => {
     }, ctx);
   }
 });
+$('#addDed').onclick = async () => { $$('.tabs button')[1].click(); const t = setInterval(() => { if (dedApi) { clearInterval(t); dedApi.openForm(); } }, 100); };
+if (new URLSearchParams(location.search).get('tab') === 'ded') $$('.tabs button')[1].click();
 load();
 </script>
 </body>

@@ -53,6 +53,19 @@ service cloud.firestore {
       allow update, delete: if isStaff();
     }
 
+    // Engineers can send their own vehicle checks and certificates from the portal.
+    function createsOwn() { return isEngineer() && request.resource.data.engineerId == myEngineerId(); }
+    match /vehicleChecks/{id} {
+      allow read: if isStaff() || ownsRecord();
+      allow create: if isStaff() || createsOwn();
+      allow update, delete: if isStaff();
+    }
+    match /qualificationSubmissions/{id} {
+      allow read: if isStaff() || ownsRecord();
+      allow create: if isStaff() || (createsOwn() && request.resource.data.status == 'Pending');
+      allow update, delete: if isStaff();
+    }
+
     // Published to the portal.
     match /notifications/{id}   { allow read: if active(); allow write: if isStaff(); }
     match /portalDocuments/{id} { allow read: if active(); allow write: if isStaff(); }
@@ -63,7 +76,7 @@ service cloud.firestore {
     // Everything else is office-only.
     match /{coll}/{id} {
       allow read, write: if isStaff() && coll in [
-        'absences', 'scheduledJobs', 'vehicleChecks', 'vanJourneys', 'speedingIncidents',
+        'absences', 'scheduledJobs', 'vanJourneys', 'speedingIncidents',
         'complianceAudits', 'complaints', 'jobRefusals', 'noAccessVisits', 'customerPayments',
         'escalations', 'testerCalibrations', 'bonusAdjustments', 'financeEntries', 'onCallRota', 'meetings'
       ];

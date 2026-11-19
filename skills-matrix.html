@@ -5,64 +5,174 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Skills Matrix</title>
 <link rel="stylesheet" href="assets/app.css">
-<style>.matrix td.clickable { font-size: 12px; min-width: 96px; } .matrix th { white-space: normal; min-width: 96px; font-size: 10.5px; }</style>
+<style>
+  .matrix td.clickable { font-size: 12px; min-width: 96px; }
+  .matrix th { white-space: normal; min-width: 96px; font-size: 10.5px; }
+  .matrix td .clip { display: inline-flex; vertical-align: -2px; margin-left: 3px; opacity: .7; }
+  #queue { border-color: #c7cbf5; }
+</style>
 </head>
 <body>
 <div id="app" hidden>
 <main class="page">
   <div class="page-head"><div><h1>Skills Matrix</h1><p id="explain"></p></div></div>
+  <div class="card" id="queue" hidden style="margin-bottom:16px">
+    <div class="card-head"><h2 style="margin:0">Certificates awaiting approval</h2><span class="badge info" id="qCount"></span></div>
+    <p class="muted" style="margin-top:-6px">Sent in by engineers from their portal. Approving adds them to the matrix.</p>
+    <div class="table-wrap"><table class="table" id="qTbl"></table></div>
+  </div>
   <div class="toolbar">
     <label class="field">Team<span id="tWrap"></span></label>
     <label class="field inline"><input type="checkbox" id="issues"> Only engineers with gaps or expiries</label>
-    <div class="spacer"></div><button class="btn" id="export" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg> Export</button>
+    <div class="spacer"></div>
+    <button class="btn" id="export" type="button"></button>
+    <label class="btn" style="cursor:pointer" id="importLbl"><input type="file" id="file" accept=".xlsx,.xls,.csv" hidden></label>
+    <button class="btn primary" id="add" type="button"></button>
   </div>
   <div class="grid" id="kpis" style="--min:170px;margin-bottom:16px"></div>
   <div class="table-wrap" style="--max-h:72vh"><table class="table matrix" id="tbl"></table></div>
 </main>
 </div>
 <script type="module">
-import { initPage, C, db, doc, setDoc, deleteDoc, $, $$, esc, el, fetchAll, getEngineers, teamSelect, teamOf, todayISO, addDays, fmtDate, slug, stamp, modal, toast, confirmBox, exportXlsx } from './assets/app.js';
+import { initPage, C, db, doc, setDoc, deleteDoc, $, $$, esc, el, options, fetchAll, getEngineers, engineerOptions, teamSelect, teamOf, todayISO, addDays, fmtDate,
+  slug, stamp, modal, toast, confirmBox, exportXlsx, readSpreadsheet, pick, normaliseDate, matchEngineer, commitInBatches, uploadFile, icon, wantsAdd } from './assets/app.js';
 
 const ctx = await initPage(); const { cfg } = ctx;
 const Q = cfg.lists.qualifications, today = todayISO(), warn = addDays(today, cfg.targets.qualificationWarnDays);
-$('#explain').innerHTML = `Click any cell to record a qualification. <span class="badge good">In date</span> <span class="badge warn">Expires within ${cfg.targets.qualificationWarnDays} days</span> <span class="badge bad">Expired</span> <span class="badge">Not held</span> — the qualification list is set on Targets &amp; KPIs.`;
+$('#explain').innerHTML = `Click any cell to record or update a qualification and attach its certificate. <span class="badge good">In date</span> <span class="badge warn">Expires within ${cfg.targets.qualificationWarnDays} days</span> <span class="badge bad">Expired</span> <span class="badge">Not held</span> The list of qualifications is set on Targets &amp; KPIs.`;
 $('#tWrap').innerHTML = teamSelect('team');
-let engineers = await getEngineers(), recs = [];
+$('#export').innerHTML = `${icon('download', 15)} Export / template`;
+$('#importLbl').insertAdjacentHTML('afterbegin', `${icon('upload', 15)} Import`);
+$('#add').innerHTML = `${icon('plus', 15)} Add qualification`;
+let engineers = await getEngineers(), recs = [], subs = [];
 const state = r => !r ? 'none' : !r.expiryDate ? 'good' : r.expiryDate < today ? 'bad' : r.expiryDate <= warn ? 'warn' : 'good';
+const key = (e, q) => `${e}|${q}`;
+const Y = { day: '2-digit', month: 'short', year: 'numeric' };
+const recRef = (engineerId, q) => doc(db, C.qualifications, `${engineerId}_${slug(q)}`);
 
-async function load() { recs = await fetchAll(C.qualifications); draw(); }
+async function load() {
+  [recs, subs] = await Promise.all([fetchAll(C.qualifications), fetchAll(C.qualificationSubmissions).catch(() => [])]);
+  drawQueue(); draw();
+}
+
+/* ---------- Matrix ---------- */
 function draw() {
-  const tid = $('#team').value, map = new Map(recs.map(r => [`${r.engineerId}|${r.qualification}`, r]));
+  const tid = $('#team').value, map = new Map(recs.map(r => [key(r.engineerId, r.qualification), r]));
   let list = engineers.filter(e => !tid || e.teamId === tid);
-  if ($('#issues').checked) list = list.filter(e => Q.some(q => state(map.get(`${e.id}|${q}`)) !== 'good'));
-  const cells = list.flatMap(e => Q.map(q => state(map.get(`${e.id}|${q}`))));
+  if ($('#issues').checked) list = list.filter(e => Q.some(q => state(map.get(key(e.id, q))) !== 'good'));
+  const cells = list.flatMap(e => Q.map(q => state(map.get(key(e.id, q)))));
   const n = s => cells.filter(c => c === s).length;
   $('#kpis').innerHTML = [['In date', n('good'), 'good'], ['Expiring soon', n('warn'), n('warn') ? 'warn' : ''], ['Expired', n('bad'), n('bad') ? 'bad' : ''], ['Not held', n('none'), '']]
     .map(([l, v, c]) => `<div class="kpi ${c}"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
   $('#tbl').innerHTML = `<thead><tr><th>Engineer</th>${Q.map(q => `<th>${esc(q)}</th>`).join('')}</tr></thead><tbody>${list.map(e => `<tr><td>${esc(e.name)}<div class="faint" style="font-size:11px">${esc(teamOf(e.teamId)?.name || '')}</div></td>${Q.map(q => {
-    const r = map.get(`${e.id}|${q}`), s = state(r);
-    return `<td class="clickable ${s === 'none' ? 'cell-muted' : 'cell-' + s}" data-e="${esc(e.id)}" data-q="${esc(q)}">${r ? (r.expiryDate ? fmtDate(r.expiryDate, { day: '2-digit', month: 'short', year: '2-digit' }) : 'No expiry') : '—'}</td>`;
+    const r = map.get(key(e.id, q)), s = state(r);
+    return `<td class="clickable ${s === 'none' ? 'cell-muted' : 'cell-' + s}" data-e="${esc(e.id)}" data-q="${esc(q)}" title="${r ? 'Click to update' : 'Click to add'}">${r ? (r.expiryDate ? fmtDate(r.expiryDate, { day: '2-digit', month: 'short', year: '2-digit' }) : 'No expiry') : '—'}${r?.certificateUrl ? `<span class="clip">${icon('folder', 12)}</span>` : ''}</td>`;
   }).join('')}</tr>`).join('') || `<tr><td colspan="${Q.length + 1}" class="empty">No engineers to show.</td></tr>`}</tbody>`;
-  $$('#tbl td.clickable').forEach(td => td.onclick = () => edit(engineers.find(e => e.id === td.dataset.e), td.dataset.q, map.get(`${td.dataset.e}|${td.dataset.q}`)));
+  $$('#tbl td.clickable').forEach(td => td.onclick = () => edit(td.dataset.e, td.dataset.q));
 }
-function edit(e, q, r = {}) {
-  const body = el(`<form class="form-grid" onsubmit="return false"><div class="full muted">${esc(e.name)} · <b style="color:var(--text)">${esc(q)}</b></div>
+
+/* ---------- Add / edit (with certificate) ---------- */
+function edit(engineerId = '', q = '') {
+  const r = recs.find(x => x.engineerId === engineerId && x.qualification === q) || {};
+  const isNew = !r.qualification;
+  const body = el(`<form class="form-grid" onsubmit="return false">
+    <label class="field">Engineer<select id="e" ${isNew && !engineerId ? '' : 'disabled'}>${engineerOptions(engineers, engineerId)}</select></label>
+    <label class="field">Qualification<select id="q" ${isNew && !q ? '' : 'disabled'}>${options(Q, q, { blank: 'Select…' })}</select></label>
     <label class="field">Achieved<input type="date" id="a" value="${esc(r.achievedDate || '')}"></label>
     <label class="field">Expires<input type="date" id="x" value="${esc(r.expiryDate || '')}"><span class="help">Leave blank if it never expires.</span></label>
-    <label class="field full">Certificate reference<input id="c" value="${esc(r.certificateRef || '')}"></label>
-    <label class="field full">Assessment booked for<input type="date" id="b" value="${esc(r.assessmentDate || '')}"></label></form>`);
-  const ref = doc(db, C.qualifications, `${e.id}_${slug(q)}`);
-  modal({ title: r.qualification ? 'Update qualification' : 'Add qualification', body, actions: [
-    ...(r.qualification ? [{ label: 'Remove', kind: 'danger', onClick: async () => { if (!(await confirmBox('Remove this qualification?', { danger: true, okLabel: 'Remove' }))) return false; await deleteDoc(ref); load(); } }] : []),
+    <label class="field">Certificate reference<input id="c" value="${esc(r.certificateRef || '')}"></label>
+    <label class="field">Renewal assessment booked<input type="date" id="b" value="${esc(r.assessmentDate || '')}"></label>
+    <label class="field full">Certificate file (PDF or photo)<input type="file" id="f" accept="application/pdf,image/*">
+      <span class="help">${r.certificateUrl ? `Current: <a href="${esc(r.certificateUrl)}" target="_blank" rel="noopener">${esc(r.certificateName || 'view certificate')}</a>. Choosing a file replaces it.` : 'Optional. Needs Firebase Storage switched on.'}</span></label>
+    <div class="full help" id="prog"></div></form>`);
+  modal({ title: isNew ? 'Add qualification' : 'Update qualification', body, actions: [
+    ...(!isNew ? [{ label: 'Remove', kind: 'danger', onClick: async () => { if (!(await confirmBox('Remove this qualification from the matrix?', { danger: true, okLabel: 'Remove' }))) return false; await deleteDoc(recRef(engineerId, q)); toast('Removed', 'good'); load(); } }] : []),
     { label: 'Cancel', kind: 'ghost' },
     { label: 'Save', kind: 'primary', onClick: async () => {
-      await setDoc(ref, stamp({ engineerId: e.id, engineerName: e.name, teamId: e.teamId || '', qualification: q, achievedDate: $('#a', body).value, expiryDate: $('#x', body).value, certificateRef: $('#c', body).value.trim(), assessmentDate: $('#b', body).value }));
+      const eid = $('#e', body).value, qual = $('#q', body).value;
+      if (!eid || !qual) { toast('Choose the engineer and the qualification', 'warn'); return false; }
+      const e = engineers.find(x => x.id === eid);
+      const data = { engineerId: eid, engineerName: e?.name || '', teamId: e?.teamId || '', qualification: qual, achievedDate: $('#a', body).value, expiryDate: $('#x', body).value,
+        certificateRef: $('#c', body).value.trim(), assessmentDate: $('#b', body).value };
+      const file = $('#f', body).files[0];
+      if (file) {
+        try {
+          const up = await uploadFile(`certificates/${eid}`, file, p => { $('#prog', body).textContent = `Uploading certificate… ${Math.round(p * 100)}%`; });
+          Object.assign(data, { certificateUrl: up.url, certificatePath: up.path, certificateName: file.name });
+        } catch (err) { console.error(err); toast('The certificate could not be uploaded (is Firebase Storage switched on?). The dates were still saved.', 'warn'); }
+      }
+      await setDoc(recRef(eid, qual), stamp(data), { merge: true });
       toast('Saved', 'good'); load();
     } }] });
 }
+$('#add').onclick = () => edit();
+
+/* ---------- Approval queue ---------- */
+function drawQueue() {
+  const pending = subs.filter(s => (s.status || 'Pending') === 'Pending').sort((a, b) => String(a.submittedOn).localeCompare(String(b.submittedOn)));
+  $('#queue').hidden = !pending.length;
+  $('#qCount').textContent = pending.length;
+  $('#qTbl').innerHTML = `<thead><tr><th>Engineer</th><th>Qualification</th><th>Achieved</th><th>Expires</th><th>Certificate</th><th>Sent in</th><th data-nosort></th></tr></thead><tbody>${pending.map(s => `<tr data-id="${esc(s.id)}">
+    <td>${esc(s.engineerName)}</td><td>${esc(s.qualification)}</td><td>${fmtDate(s.achievedDate, Y)}</td><td>${s.expiryDate ? fmtDate(s.expiryDate, Y) : 'No expiry'}</td>
+    <td>${s.fileUrl ? `<a href="${esc(s.fileUrl)}" target="_blank" rel="noopener">${icon('folder', 14)} View</a>` : '<span class="faint">No file</span>'} ${s.certificateRef ? `<span class="faint">${esc(s.certificateRef)}</span>` : ''}</td>
+    <td>${fmtDate(s.submittedOn)}</td>
+    <td class="actions"><button class="btn sm good" data-ok>${icon('check', 14)} Approve</button> <button class="btn sm danger" data-no>Reject</button></td></tr>`).join('')}</tbody>`;
+  $$('#qTbl [data-ok]').forEach(b => b.onclick = async () => {
+    const s = subs.find(x => x.id === b.closest('tr').dataset.id);
+    await commitInBatches([
+      { type: 'set', merge: true, ref: recRef(s.engineerId, s.qualification), data: stamp({ engineerId: s.engineerId, engineerName: s.engineerName, teamId: s.teamId || '', qualification: s.qualification,
+        achievedDate: s.achievedDate || '', expiryDate: s.expiryDate || '', certificateRef: s.certificateRef || '', ...(s.fileUrl ? { certificateUrl: s.fileUrl, certificatePath: s.filePath || '', certificateName: s.fileName || '' } : {}) }) },
+      { type: 'set', merge: true, ref: doc(db, C.qualificationSubmissions, s.id), data: stamp({ status: 'Approved', decidedBy: ctx.user.email, decidedOn: today }) },
+    ]);
+    toast(`Approved — ${s.qualification} added for ${s.engineerName}`, 'good'); load();
+  });
+  $$('#qTbl [data-no]').forEach(b => b.onclick = () => {
+    const s = subs.find(x => x.id === b.closest('tr').dataset.id);
+    const body = el(`<label class="field">Reason (the engineer sees this)<input id="why" placeholder="e.g. Photo is unreadable — please resend"></label>`);
+    modal({ title: 'Reject certificate', body, actions: [{ label: 'Cancel', kind: 'ghost' }, { label: 'Reject', kind: 'danger', onClick: async () => {
+      await setDoc(doc(db, C.qualificationSubmissions, s.id), stamp({ status: 'Rejected', reason: $('#why', body).value.trim(), decidedBy: ctx.user.email, decidedOn: today }), { merge: true });
+      toast('Rejected'); load();
+    } }] });
+  });
+}
+
+/* ---------- Export / import (one row per engineer, one column per qualification) ---------- */
+$('#export').onclick = () => {
+  const map = new Map(recs.map(r => [key(r.engineerId, r.qualification), r]));
+  exportXlsx(`skills-matrix-${today}`, { 'Skills matrix': engineers.map(e => Object.fromEntries([['Engineer', e.name], ['Employee number', e.employeeNumber || ''], ['Team', teamOf(e.teamId)?.name || ''],
+    ...Q.map(q => { const r = map.get(key(e.id, q)); return [q, r ? (r.expiryDate || 'No expiry') : '']; })])),
+    'How to fill in': [{ Instructions: 'One row per engineer. Under each qualification put its expiry date (DD/MM/YYYY or YYYY-MM-DD), or "No expiry" if it never expires. Leave a cell blank to leave it unchanged.' }] });
+};
+$('#file').onchange = async ev => {
+  const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
+  const all = await getEngineers({ includeLeavers: true });
+  const raw = await readSpreadsheet(f);
+  const ops = [], missing = []; let cellsRead = 0;
+  for (const r of raw) {
+    const e = matchEngineer(all, pick(r, 'Employee number', 'Employee no', 'Engineer', 'Engineer name', 'Name'));
+    if (!e) { const nm = pick(r, 'Engineer', 'Name'); if (nm) missing.push(nm); continue; }
+    for (const q of Q) {
+      const v = String(pick(r, q) || '').trim();
+      if (!v) continue;
+      const noExpiry = /^(no expiry|yes|held|y|✓)$/i.test(v);
+      const date = noExpiry ? '' : normaliseDate(v);
+      if (!noExpiry && !date) continue;
+      cellsRead++;
+      ops.push({ type: 'set', merge: true, ref: recRef(e.id, q), data: stamp({ engineerId: e.id, engineerName: e.name, teamId: e.teamId || '', qualification: q, expiryDate: date }) });
+    }
+  }
+  modal({ title: 'Import skills matrix', body: `<p><b>${cellsRead}</b> qualification(s) ready to save for <b>${new Set(ops.map(o => o.data.engineerId)).size}</b> engineer(s).</p>
+    ${missing.length ? `<p class="t-warn">${missing.length} row(s) skipped — engineer not found: ${missing.slice(0, 6).map(esc).join(', ')}${missing.length > 6 ? '…' : ''}</p>` : ''}
+    <p class="muted">Columns must be named exactly as the qualifications on Targets &amp; KPIs. Blank cells are left unchanged.</p>`,
+    actions: [{ label: 'Cancel', kind: 'ghost' }, { label: 'Import', kind: 'primary', onClick: async () => {
+      if (!ops.length) { toast('Nothing to import', 'warn'); return false; }
+      await commitInBatches(ops); toast(`Imported ${ops.length} qualification(s)`, 'good'); load();
+    } }] });
+};
+
 $('#team').onchange = draw; $('#issues').onchange = draw;
-$('#export').onclick = () => { const map = new Map(recs.map(r => [`${r.engineerId}|${r.qualification}`, r])); exportXlsx(`skills-matrix-${today}`, { 'Skills matrix': engineers.map(e => Object.fromEntries([['Engineer', e.name], ['Team', teamOf(e.teamId)?.name || ''], ...Q.map(q => { const r = map.get(`${e.id}|${q}`); return [q, r ? (r.expiryDate || 'No expiry') : '']; })])) }); };
-load();
+await load();
+if (wantsAdd()) edit();
 </script>
 </body>
 </html>

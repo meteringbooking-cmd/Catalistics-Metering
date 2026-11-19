@@ -8,7 +8,7 @@ import {
   $, $$, esc, el, options, num, fmtDate, fmtMoney, fmtNum, todayISO, addDays,
   fetchAll, fetchRange, getEngineers, engineerOptions, teamName, contractName, teamOf,
   modal, toast, confirmBox, makeSortable, exportXlsx, readSpreadsheet, pick, normaliseDate,
-  matchEngineer, commitInBatches, stamp, icon
+  matchEngineer, commitInBatches, stamp, icon, wantsAdd
 } from './app.js';
 
 const optList = (f, cfg) => (typeof f.options === 'function' ? f.options(cfg) : f.options || []);
@@ -265,6 +265,7 @@ export async function logbook(container, spec, ctx) {
 
   const api = { reload: load, openForm, get rows() { return rows; }, get visible() { return visibleRows(); }, ctx, render };
   await load();
+  if (spec.canAdd !== false && !spec.noAutoAdd && wantsAdd()) openForm();
   return api;
 }
 

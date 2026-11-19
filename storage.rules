@@ -1,15 +1,25 @@
 rules_version = '2';
 
 // Catalistics — Cloud Storage rules.
-// Portal documents: anyone signed in with an active profile can read; admins and managers upload.
 service firebase.storage {
   match /b/{bucket}/o {
     function profile() { return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data; }
+    function active()  { return request.auth != null && profile().get('active', true) == true; }
+    function isStaff() { return active() && profile().role in ['admin', 'manager']; }
 
+    // Portal documents: everyone signed in can read; admins and managers upload.
     match /portal-documents/{file} {
-      allow read: if request.auth != null && profile().get('active', true) == true;
-      allow write: if request.auth != null && profile().role in ['admin', 'manager']
-                   && (request.resource == null || request.resource.size < 25 * 1024 * 1024);
+      allow read: if active();
+      allow write: if isStaff() && (request.resource == null || request.resource.size < 25 * 1024 * 1024);
+    }
+
+    // Certificates: staff see all; an engineer can read and upload their own (PDF or image, under 15 MB).
+    match /certificates/{engineerId}/{file} {
+      allow read: if isStaff() || (active() && profile().get('engineerId', '') == engineerId);
+      allow create, update: if (isStaff() || (active() && profile().get('engineerId', '') == engineerId))
+                            && request.resource.size < 15 * 1024 * 1024
+                            && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
+      allow delete: if isStaff();
     }
   }
 }

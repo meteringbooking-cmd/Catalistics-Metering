@@ -138,6 +138,9 @@ async function generate(perTeam, nDays) {
     put(C.testerCalibrations, null, { engineerId: e.id, engineerName: e.name, teamId: e.teamId, contractId: e.contractId, make: pick(['Tester Model A', 'Tester Model B', 'Tester Model C']), serial: `SN${int(100000, 999999)}`, calibrationDate: addDays(today, -int(20, 400)), certificateRef: '' });
   }
   const someone = () => pick(engs);
+  for (let k = 0; k < 3; k++) { const e = pick(engs); const q = pick(L.qualifications); const a = addDays(today, -int(1, 10));
+    put(C.qualificationSubmissions, null, { engineerId: e.id, engineerName: e.name, teamId: e.teamId, qualification: q, achievedDate: a, expiryDate: addDays(a, 365 * int(1, 3)),
+      certificateRef: `CERT-${int(1000, 9999)}`, fileUrl: '', filePath: '', fileName: '', status: 'Pending', submittedOn: addDays(today, -int(0, 3)) }); }
   const who = e => ({ engineerId: e.id, engineerName: e.name, teamId: e.teamId, contractId: e.contractId });
   const statusesC = ['Open', 'Investigating', 'Awaiting customer', 'Closed', 'Closed', 'Closed'];
   for (let k = 1; k <= 12; k++) {

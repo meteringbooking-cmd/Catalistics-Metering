@@ -25,7 +25,10 @@
       <label class="field">Team<span id="tWrap"></span></label>
       <button class="btn" id="copyPrev" type="button">Copy previous working day</button>
       <button class="btn" id="fillBlank" type="button">Fill blanks with “working”</button>
-      <div class="spacer"></div><button class="btn primary" id="save" type="button">Save attendance</button>
+      <div class="spacer"></div>
+      <button class="btn" id="template" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg> Upload template</button>
+      <label class="btn" style="cursor:pointer"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/></svg> Upload spreadsheet<input type="file" id="file" accept=".xlsx,.xls,.csv" hidden></label>
+      <button class="btn primary" id="save" type="button">Save attendance</button>
     </div>
     <div class="legend" id="legend" style="margin-bottom:12px"></div>
     <div class="table-wrap" style="--max-h:70vh"><table class="table" id="dayTbl"></table></div>
@@ -34,7 +37,7 @@
     <div class="toolbar">
       <label class="field">Month<input type="month" id="month"></label>
       <label class="field">Team<span id="tWrap2"></span></label>
-      <span class="help">Click a day to change its code.</span>
+      <span class="help">Click a day to change its code — including future days for booked holiday or training.</span>
       <div class="spacer"></div><button class="btn" id="exportMonth" type="button"><svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg> Export</button>
     </div>
     <div class="table-wrap" style="--max-h:72vh"><table class="table matrix" id="monthTbl"></table></div>
@@ -42,14 +45,15 @@
 </main>
 </div>
 <script type="module">
-import { initPage, C, db, doc, $, $$, esc, el, options, fetchRange, getEngineers, prevWorkingDay, todayISO, addDays, isWorkingDay, monthStart, monthEnd,
+import { initPage, readSpreadsheet, pick, normaliseDate, matchEngineer, fmtDateLong, C, db, doc, $, $$, esc, el, options, fetchRange, getEngineers, prevWorkingDay, todayISO, addDays, isWorkingDay, monthStart, monthEnd,
   stamp, commitInBatches, setDoc, deleteDoc, toast, modal, teamSelect, teamOf, codeOf, codeChip, attendanceSummary, fmtPct, rag, exportXlsx, parseISO } from './assets/app.js';
 
 const ctx = await initPage(); const { cfg } = ctx;
 const codes = cfg.attendanceCodes;
 const defaultWorking = codes.find(c => c.type === 'working')?.code || codes[0]?.code;
 $('#tWrap').innerHTML = teamSelect('team'); $('#tWrap2').innerHTML = teamSelect('team2');
-$('#day').value = todayISO(); $('#month').value = todayISO().slice(0, 7);
+const qs = new URLSearchParams(location.search);
+$('#day').value = qs.get('date') || todayISO(); $('#month').value = ($('#day').value).slice(0, 7);
 $('#legend').innerHTML = codes.map(c => `<span>${codeChip(c.code)} ${esc(c.label)}</span>`).join('');
 let engineers = await getEngineers(), saved = new Map(), picks = new Map();
 
@@ -139,6 +143,36 @@ $('#exportMonth').onclick = () => {
   const map = new Map(monthRows.map(r => [`${r.date}_${r.engineerId}`, r.code]));
   exportXlsx(`attendance-${$('#month').value}`, { Attendance: engineers.map(e => Object.fromEntries([['Engineer', e.name], ['Team', teamOf(e.teamId)?.name || ''], ...days.map(d => [d, map.get(`${d}_${e.id}`) || ''])])) });
 };
+/* ---------- Spreadsheet upload ---------- */
+$('#template').onclick = () => exportXlsx(`attendance-upload-template-${$('#day').value}`, { Attendance: engineers.map(e => ({ Date: $('#day').value, Engineer: e.name, 'Employee number': e.employeeNumber || '', Code: '' })),
+  Codes: codes.map(c => ({ Code: c.code, Meaning: c.label })) });
+$('#file').onchange = async ev => {
+  const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
+  const all = await getEngineers({ includeLeavers: true });
+  const raw = await readSpreadsheet(f);
+  const ready = [], noEng = [], badCode = [];
+  for (const r of raw) {
+    const e = matchEngineer(all, pick(r, 'Employee number', 'Employee no', 'Engineer', 'Engineer name', 'Name'));
+    let code = String(pick(r, 'Code', 'Attendance', 'Attendance code') || '').trim();
+    if (!code) continue;
+    const c = codes.find(x => x.code.toLowerCase() === code.toLowerCase() || x.label.toLowerCase() === code.toLowerCase());
+    if (!e) { noEng.push(pick(r, 'Engineer', 'Name') || '(blank)'); continue; }
+    if (!c) { badCode.push(code); continue; }
+    ready.push({ e, code: c.code, date: normaliseDate(pick(r, 'Date', 'Day')) || $('#day').value });
+  }
+  const dates = [...new Set(ready.map(r => r.date))].sort();
+  modal({ title: 'Upload attendance', body: `<p><b>${ready.length}</b> code(s) ready across <b>${dates.length}</b> day(s)${dates.length ? ` (${fmtDateLong(dates[0])}${dates.length > 1 ? ' – ' + fmtDateLong(dates[dates.length - 1]) : ''})` : ''}.</p>
+      ${noEng.length ? `<p class="t-warn">${noEng.length} row(s) skipped — engineer not found: ${noEng.slice(0, 6).map(esc).join(', ')}${noEng.length > 6 ? '…' : ''}</p>` : ''}
+      ${badCode.length ? `<p class="t-warn">${badCode.length} row(s) skipped — unknown code: ${[...new Set(badCode)].slice(0, 6).map(esc).join(', ')}. Codes are set on Targets &amp; KPIs.</p>` : ''}
+      <p class="muted">Existing codes for the same engineer and day are replaced.</p>`,
+    actions: [{ label: 'Cancel', kind: 'ghost' }, { label: 'Save upload', kind: 'primary', onClick: async () => {
+      if (!ready.length) { toast('Nothing to upload', 'warn'); return false; }
+      await commitInBatches(ready.map(r => ({ type: 'set', ref: doc(db, C.attendance, `${r.date}_${r.e.id}`), data: stamp({ date: r.date, engineerId: r.e.id, engineerName: r.e.name, teamId: r.e.teamId || '', contractId: r.e.contractId || '', code: r.code }) })));
+      toast(`Uploaded ${ready.length} code(s)`, 'good'); loadDay(); if (!$('#monthView').hidden) loadMonth();
+    } }] });
+};
+
+if (qs.get('view') === 'month') $$('.tabs button')[1].click();
 loadDay();
 </script>
 </body>

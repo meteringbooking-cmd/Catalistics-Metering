@@ -27,6 +27,7 @@ const COLLECTIONS = {
   customerPayments: ['date', 'Compensation / goodwill payments to customers: type, amount, paid.'],
   escalations: ['dateRaised', 'Issues escalated to suppliers/client/other teams: type, summary, status, closed date.'],
   qualifications: ['expiryDate', 'Engineer qualifications: qualification, achieved date, expiry date.'],
+  qualificationSubmissions: ['submittedOn', 'Certificates sent in by engineers: qualification, dates, status Pending/Approved/Rejected.'],
   testerCalibrations: ['calibrationDate', 'Test equipment per engineer: make, serial, last calibration date.'],
   additionalPayments: ['date', 'Engineer claims (standby, overtime…): type, quantity, rate, amount, status Pending/Approved/Rejected.'],
   bonusStatements: ['to', 'Approved bonus statements per engineer per period: meters, base, multiplier, deductions, total.'],

@@ -39,7 +39,7 @@
 </main>
 </div>
 <script type="module">
-import { initPage, C, db, doc, collection, addDoc, setDoc, deleteDoc, serverTimestamp, $, $$, esc, el, options, fetchRange, getEngineers, engineerOptions,
+import { initPage, wantsAdd, C, db, doc, collection, addDoc, setDoc, deleteDoc, serverTimestamp, $, $$, esc, el, options, fetchRange, getEngineers, engineerOptions,
   todayISO, stamp, commitInBatches, toast, modal, confirmBox, teamSelect, teamOf, readSpreadsheet, pick, normaliseDate, matchEngineer, num, exportXlsx, fmtNum, fmtDateLong, state } from './assets/app.js';
 
 const ctx = await initPage(); const { cfg } = ctx;
@@ -157,6 +157,7 @@ $('#file').onchange = async ev => {
 };
 $('#day').onchange = load; $('#team').onchange = draw; $('#q').oninput = draw;
 load();
+if (wantsAdd()) $('#add').click();
 </script>
 </body>
 </html>

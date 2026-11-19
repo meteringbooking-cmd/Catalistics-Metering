@@ -161,7 +161,8 @@ The function runs in `europe-west2` (London). If you change that, change `REGION
 | `absences` | Absence spells |
 | `vehicleChecks`, `vanJourneys`, `speedingIncidents` | Fleet records |
 | `complianceAudits`, `complaints`, `jobRefusals`, `noAccessVisits`, `customerPayments`, `escalations` | Quality records |
-| `qualifications` | One per engineer per qualification (ID `engineerId_qualification`) |
+| `qualifications` | One per engineer per qualification (ID `engineerId_qualification`), with optional certificate file |
+| `qualificationSubmissions` | Certificates sent in by engineers from the portal, waiting for approval on the Skills Matrix |
 | `testerCalibrations` | Test equipment and calibration dates |
 | `additionalPayments` | Claims (Pending / Approved / Rejected) |
 | `bonusAdjustments` | Bonus deductions |

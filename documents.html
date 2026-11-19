@@ -19,7 +19,7 @@
 </main>
 </div>
 <script type="module">
-import { initPage, C, db, app, doc, collection, addDoc, deleteDoc, serverTimestamp, $, $$, esc, el, options, fetchAll, teamOf, fmtDate, iso, toast, modal, confirmBox, makeSortable } from './assets/app.js';
+import { initPage, wantsAdd, C, db, app, doc, collection, addDoc, deleteDoc, serverTimestamp, $, $$, esc, el, options, fetchAll, teamOf, fmtDate, iso, toast, modal, confirmBox, makeSortable } from './assets/app.js';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js';
 
 const ctx = await initPage(); const { cfg } = ctx;
@@ -70,6 +70,7 @@ $('#upload').onclick = () => {
 };
 $('#cat').onchange = draw; $('#q').oninput = draw;
 load();
+if (wantsAdd()) $('#upload').click();
 </script>
 </body>
 </html>
